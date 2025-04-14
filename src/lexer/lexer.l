@@ -1,3 +1,9 @@
+%option yylineno
+%option noyywrap
+%option stack
+%option verbose
+%option warn
+
 %{
 
 #include <stack>
@@ -10,26 +16,26 @@
 
 #define YYSTYPE Token   /* Define own Token Structure */
 
-#define SAVE_TOKEN yylval.string = new std::string(yytext, yyleng)
-#define SAVE_INTEGER yylval.integer = std::stoll(std::string(yytext, yyleng))
-#define SAVE_DOUBLE yylval.number = std::stod(std::string(yytext, yyleng))
-#define SAVE_BOOLEAN yylval.boolean = std::string(yytext, yyleng) == "true" ? 1 : 0
-#define SAVE_CHARATER yylval.charater = std::string(yytext, yyleng).c_str()[0]
+#define SAVE_IDENTIFIER yylval.token = identifier(yytext, yylineno, yycolumn)
+#define SAVE_INTEGER yylval.token = integer(yytext, yylineno, yycolumn)
+#define SAVE_NUMBER yylval.token = number(yytext, yylineno, yycolumn)
+#define SAVE_BOOLEAN yylval.token = boolean(yytext, yylineno, yycolumn)
+#define SAVE_CHARATER yylval.token = charater(yytext, yylineno, yycolumn)
+#define SAVE_STRING yylval.token = strings(yytext, yylineno, yycolumn)
+#define SAVE_BYTE yylval.token = bytes(yytext, yylineno, yycolumn)
+#define SAVE_DOC yylval.token = doc(yytext, yylineno, yycolumn)
+#define SAVE_TOKEN(type) yylval.token = token(type, yytext, yylineno, yycolumn)
 
-#define TOKEN(t) (yylval.token = t)
-
-#define KEY_TOKEN(t) TOKEN(t)
-#define SYM_TOKEN(t) TOKEN(t)
-#define OPP_TOKEN(t) TOKEN(t)
-
-extern "C" int yywrap() { return 1; }
+#define KEY_TOKEN(type) SAVE_TOKEN(type)
+#define SYM_TOKEN(type) SAVE_TOKEN(type)
+#define OPP_TOKEN(type) SAVE_TOKEN(type)
 
 #define YYERROR_VERBOSE 1
 
 int yyerror(char const * s )
 {
     printf("ERROR %s in '%s' at line %d col %d\n", s, yytext, yylineno, yycolumn);
-    printf("  parsed %s %d.%d-%d.%d\n", yylloc.file_name.c_str(), yylloc.first_line, yylloc.first_column, yylloc.last_line, yylloc.last_column);
+    printf("  parsed %d.%d-%d.%d\n",yylloc.first_line, yylloc.first_column, yylloc.last_line, yylloc.last_column);
     return 1;
 }
 
@@ -60,41 +66,72 @@ size_t yycolumn  = 1 ;       /* To Track Column Number */
 
 %}
 
-%option yylineno    /* Enable line counting */
-%option noyywrap    /* Disable yywrap() function */
-%option stack       /* Enable use of stack to store DFA Table */
-%option verbose     /* Generate Verbose Output */
-%option warn        /* Enable Warnnings */
 
-%s normal           /* %s - Define Exclusive Start Condition */
-%x str qstr         /* %x - Define Inclusive Start Condition */
+/* %s - Define Exclusive Start Condition */
+/* %x - Define Inclusive Start Condition */
+
+%s normal           
+%x str qstr         
 %x comment
 %x include
 
 whitespace  [ \f\t]*
 linecomment #[^\r\n]*
-ignore      {whitespace} + (\\\r?\n'|{whitespace})({linecomment})?
+ignore      {whitespace}(\\\r?\n'|{whitespace})({linecomment})?
 name        \w+
+
+dig     [0-9]
+num1    [-+]?{dig}+\.([eE][-+]?{dig}+)?
+num2    [-+]?{dig}*\.{dig}+([eE][-+]?{dig}+)?
+number  {num1}|{num2}
 
 hexnumber   0[xX](?:_?[0-9a-fA-F])+
 binnumber   0[bB](?:_?[01])+
 octnumber   0[oO](?:_?[0-7])+
-decnumber   (?:0(?:_?0)*|[1-9](?:_?[0-9])*)
+decnumber   ?:0(?:_?0)*|[1-9](?:_?[0-9])*
 exponent    [eE][-+]?[0-9](?:_?[0-9])*
 
-intnumber   ({hexnumber}|{binnumber}|{octnumber}|{decnumber})
+intnumber   {hexnumber}|{binnumber}|{octnumber}|{decnumber}
 pointfloat  ([0-9](?:_?[0-9])*\.(?:[0-9](?:_?[0-9])*)?|\.[0-9](?:_?[0-9])*')({exponent})?
 expfloat    [0-9](?:_?[0-9])*{exponent}
 floatnumber (pointfloat|exponent)
 imagnumber  ([0-9](?:_?[0-9])*[jJ]|{floatnumber}[jJ])
-number      ({imagnumber}|{floatnumber}|{intnumber})
+number      {imagnumber}|{floatnumber}|{intnumber}
 
 %%
 
-\n              { yylval = CreateToken(EOL,yytext,yylineno,column);yylineno++; column = 1;return T_EOL;}    
-.               {column++;}         
+import              BEGIN(incl);
+<incl>[ \t]*        /* eat the whitespace */
+<incl>[^ \t\n\r]+   { /* got the include file name */
+                    std::string fileName = yytext;
+                    std::size_t pos = fileName.find(".liq");
+                    if( pos == std::string::npos ) {
+                        fileName += ".liq";
+                    }
+                    for( auto libpath : libPaths ) {
+                        yyin = fopen( (libpath + fileName).c_str() , "r" );
+                        if( yyin )
+                            break;
+                    }
+                    if ( ! yyin ) {
+                       printf( "%s in %s line %d\n", (std::string("Failed to load import file ") + fileName).c_str(), fileNames.top().c_str(), yylineno );
+                       parsing_error = 1;
+                       yyterminate();
+                    } else {
+                       fileNames.push(yytext);
+                       lineNo.push(yylineno);
+                       yylineno = yycolumn = 1;
+                       yylloc.first_line = yylloc.first_column =  yylloc.last_line = yylloc.last_column = 1;
+                       yypush_buffer_state(yy_create_buffer( yyin, YY_BUF_SIZE ));
+                    }
+                    BEGIN(normal);
+                    }
+     
 
-"if"             { yylval = CreateToken(KEYWORD,yytext,yylineno,column); column+=yyleng;return T_IF;}
+\n              { Token token = SAVE_TOKEN(EOL);yylineno++; column = 1;return token;}    
+.               {yycolumn++;}         
+
+"if"             { Token token = SAVE_TOKEN(T_KEYWORD); yycolumn+=yyleng;return token;}
 
 import              BEGIN(include);
 <include>[ \t]*        /* eat the whitespace */
@@ -159,8 +196,7 @@ import              BEGIN(include);
 
 <normal>"\n"    { yycolumn = 1; }
 
-<<EOF>>         /* Define an Action for the EOF Condition */ 
-                {
+<<EOF>>         /* Define an Action for the EOF Condition */ {
                    if( curr_indents.size() > 1 ) {
                         curr_indents.pop();
                         return TOKEN(UNINDENT);
@@ -175,8 +211,7 @@ import              BEGIN(include);
                    }
                 }
 
-{name}                  SAVE_TOKEN; return T_IDENTIFIER;
-{intnumber}             SAVE_INTEGER; return T_INTEGER;
+{name}                  {SAVE_TOKEN; return T_IDENTIFIER;}
 {floatnumber} 			SAVE_TOKEN; return T_DOUBLE;
 
 {ignore}                /* ignore spaces and others */;

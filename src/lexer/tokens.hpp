@@ -1,6 +1,17 @@
 #ifndef TOY_LEXER_TOKENS_H
 #define TOY_LEXER_TOKENS_H
 
+// %option yylineno   /* Enable line counting */
+// % option noyywrap  /* Disable yywrap() function */
+// % option stack     /* Enable use of stack to store DFA Table */
+// % option verbose   /* Generate Verbose Output */
+// % option warn      /* Enable Warnnings */
+
+/*
+ import  KEY_TOKEN(T_IMPORT); return T_IMPORT;
+ 
+*/
+
 #include "location.hpp"
 
 typedef enum TokenType
@@ -150,6 +161,8 @@ typedef struct Token
 
   union
   {
+    char *identifier;
+    char character;
     char *string;
     long long integer;
     double number;
@@ -180,7 +193,119 @@ typedef struct Token
 //
 /// \return Token Object
 ///////////////////////////////////////////////////////////////////////////////
-Token *token(TokenType type, char *value, size_t startline, size_t endline, size_t startcolumn, size_t endcolumn);
+Token *token(TokenType type, char *value, size_t startline, size_t startcolumn);
+
+///////////////////////////////////////////////////////////////////////////////
+/// \brief Create a Token Object
+///
+/// \param type Type of Token
+/// \param value value of Token
+/// \param startline Start Line of Token
+/// \param endline End Line of Token
+/// \param startcolon Token Start Column
+/// \param endcolon Token End Column
+//
+/// \return Token Object
+///////////////////////////////////////////////////////////////////////////////
+Token *doc(char *value, size_t startline, size_t endline, size_t startcolumn, size_t endcolumn);
+
+///////////////////////////////////////////////////////////////////////////////
+/// \brief Create a Token Object
+///
+/// \param type Type of Token
+/// \param value value of Token
+/// \param startline Start Line of Token
+/// \param endline End Line of Token
+/// \param startcolon Token Start Column
+/// \param endcolon Token End Column
+//
+/// \return Token Object
+///////////////////////////////////////////////////////////////////////////////
+Token *integer(char *value, size_t startline, size_t startcolumn);
+
+///////////////////////////////////////////////////////////////////////////////
+/// \brief Create a Token Object
+///
+/// \param type Type of Token
+/// \param value value of Token
+/// \param startline Start Line of Token
+/// \param endline End Line of Token
+/// \param startcolon Token Start Column
+/// \param endcolon Token End Column
+//
+/// \return Token Object
+///////////////////////////////////////////////////////////////////////////////
+Token *number(char *value, size_t startline, size_t startcolumn);
+
+///////////////////////////////////////////////////////////////////////////////
+/// \brief Create a Token Object
+///
+/// \param type Type of Token
+/// \param value value of Token
+/// \param startline Start Line of Token
+/// \param endline End Line of Token
+/// \param startcolon Token Start Column
+/// \param endcolon Token End Column
+//
+/// \return Token Object
+///////////////////////////////////////////////////////////////////////////////
+Token *identifier(char *value, size_t startline, size_t startcolumn);
+
+///////////////////////////////////////////////////////////////////////////////
+/// \brief Create a Token Object
+///
+/// \param type Type of Token
+/// \param value value of Token
+/// \param startline Start Line of Token
+/// \param endline End Line of Token
+/// \param startcolon Token Start Column
+/// \param endcolon Token End Column
+//
+/// \return Token Object
+///////////////////////////////////////////////////////////////////////////////
+Token *charater(char *value, size_t startline, size_t startcolumn);
+
+///////////////////////////////////////////////////////////////////////////////
+/// \brief Create a Token Object
+///
+/// \param type Type of Token
+/// \param value value of Token
+/// \param startline Start Line of Token
+/// \param endline End Line of Token
+/// \param startcolon Token Start Column
+/// \param endcolon Token End Column
+//
+/// \return Token Object
+///////////////////////////////////////////////////////////////////////////////
+Token *boolean(char *value, size_t startline, size_t startcolumn);
+
+///////////////////////////////////////////////////////////////////////////////
+/// \brief Create a Token Object
+///
+/// \param type Type of Token
+/// \param value value of Token
+/// \param startline Start Line of Token
+/// \param endline End Line of Token
+/// \param startcolon Token Start Column
+/// \param endcolon Token End Column
+//
+/// \return Token Object
+///////////////////////////////////////////////////////////////////////////////
+Token *bytes(char *value, size_t startline, size_t startcolumn);
+
+///////////////////////////////////////////////////////////////////////////////
+/// \brief Create a Token Object
+///
+/// \param type Type of Token
+/// \param value value of Token
+/// \param startline Start Line of Token
+/// \param endline End Line of Token
+/// \param startcolon Token Start Column
+/// \param endcolon Token End Column
+//
+/// \return Token Object
+///////////////////////////////////////////////////////////////////////////////
+Token *strings(char *value, size_t startline, size_t startcolumn);
 
 ///////////////////////////////////////////////////////////////////////////////
 /// \brief String of Token Object Type
@@ -216,18 +341,6 @@ const char *token_to_string(Token *Token);
 ///////////////////////////////////////////////////////////////////////////////
 void token_printf(Token *Token);
 
-#define identifier_token(value, startline, endline, startcolon, endcolon) token(TokenType::T_IDENTIFIER, value, startline, endline, startcolon, endcolon)
-#define integer_token(value, startline, endline, startcolon, endcolon) token(TokenType::T_INTEGER, value, startline, endline, startcolon, endcolon)
-#define float_token(value, startline, endline, startcolon, endcolon) token(TokenType::T_FLOAT, value, startline, endline, startcolon, endcolon)
-#define string_token(value, startline, endline, startcolon, endcolon) token(TokenType::T_STRING, value, startline, endline, startcolon, endcolon)
-#define char_token(value, startline, endline, startcolon, endcolon) token(TokenType::T_CHAR, value, startline, endline, startcolon, endcolon)
-#define bool_token(value, startline, endline, startcolon, endcolon) token(TokenType::T_BOOL, value, startline, endline, startcolon, endcolon)
-
-#define SAVE_TOKEN yylval = char_token(yytext, yylineno, yylineno, yycolumn, yycolumn + yyleng)
-#define SAVE_IDENTIFIER yylval = identifier_token(yytext, yylineno, yylineno, yycolumn, yycolumn + yyleng)
-#define SAVE_INTEGER yylval = integer_token(yytext, yylineno, yylineno, yycolumn, yycolumn + yyleng)
-#define SAVE_FLOAT yylval = float_token(yytext, yylineno, yylineno, yycolumn, yycolumn + yyleng)
-#define SAVE_BOOLEAN yylval = bool_token(yytext, yylineno, yylineno, yycolumn, yycolumn + yyleng)
-#define SAVE_CHARATER yylval = char_token(yytext, yylineno, yylineno, yycolumn, yycolumn + yyleng)
+/* {intnumber}             {SAVE_INTEGER; return T_INTEGER;} */
 
 #endif // TOY_LEXER_TOKENS_H

@@ -3,10 +3,13 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <iostream>
+#include <string>
+
 #include "tokens.hpp"
 
 extern char *yytext;
-extern size_t yycoumn;
+extern size_t yycolumn;
 extern size_t yylineno;
 
 static char *desugar_num(char *, char *);
@@ -129,7 +132,95 @@ static char *desugar_num(char *tok, char *default_suffix)
     return res;
 }
 
-Token *token(TokenType type, char *value, size_t startline, size_t endline, size_t startcolumn, size_t endcolumn) {};
+Token *token(TokenType type, char *value, size_t startline, size_t startcolumn)
+{
+    Token *token = (Token *)malloc(sizeof(Token));
+    token->type = type;
+    token->value.string = strdup(value);
+    token->loc = location(startline, startline, startcolumn, startcolumn + strlen(value));
+
+    return token;
+};
+
+Token *doc(char *value, size_t startline, size_t endline, size_t startcolumn, size_t endcolumn)
+{
+    Token *token = (Token *)malloc(sizeof(Token));
+    token->type = T_DOC;
+    token->value.string = strdup(value);
+    token->loc = location(startline, startline, startcolumn, startcolumn + strlen(value));
+
+    return token;
+};
+
+Token *identifier(char *value, size_t startline, size_t startcolumn)
+{
+    Token *token = (Token *)malloc(sizeof(Token));
+    token->type = T_IDENTIFIER;
+    token->value.string = strdup(value);
+    token->loc = location(startline, startline, startcolumn, startcolumn + strlen(value));
+
+    return token;
+};
+
+Token *integer(char *value, size_t startline, size_t startcolumn)
+{
+    Token *token = (Token *)malloc(sizeof(Token));
+    token->type = T_INTEGER;
+    token->value.integer = std::stoll(std::string(value, strlen(value)));
+    token->loc = location(startline, startline, startcolumn, startcolumn + strlen(value));
+
+    return token;
+};
+
+Token *number(char *value, size_t startline, size_t startcolumn)
+{
+    Token *token = (Token *)malloc(sizeof(Token));
+    token->type = T_FLOAT;
+    token->value.number = std::stod(std::string(value, strlen(value)));
+    token->loc = location(startline, startline, startcolumn, startcolumn + strlen(value));
+
+    return token;
+};
+
+Token *charater(char *value, size_t startline, size_t startcolumn)
+{
+    Token *token = (Token *)malloc(sizeof(Token));
+    token->type = T_CHAR;
+    token->value.character = value[0];
+    token->loc = location(startline, startline, startcolumn, startcolumn + strlen(value));
+
+    return token;
+};
+
+Token *boolean(char *value, size_t startline, size_t startcolumn)
+{
+    Token *token = (Token *)malloc(sizeof(Token));
+    token->type = T_BOOL;
+    token->value.boolean = std::string(value) == "true" ? 1 : 0;
+    token->loc = location(startline, startline, startcolumn, startcolumn + strlen(value));
+
+    return token;
+};
+
+Token *strings(char *value, size_t startline, size_t startcolumn)
+{
+    Token *token = (Token *)malloc(sizeof(Token));
+    token->type = T_STRING;
+    token->value.string = strdup(value);
+    token->loc = location(startline, startline, startcolumn, startcolumn + strlen(value));
+
+    return token;
+};
+
+Token *bytes(char *value, size_t startline, size_t startcolumn)
+{
+    Token *token = (Token *)malloc(sizeof(Token));
+    token->type = T_BYTE;
+    token->value.string = strdup(value);
+    token->loc = location(startline, startline, startcolumn, startcolumn + strlen(value));
+
+    return token;
+};
 
 const char *token_type_to_string(TokenType type)
 {

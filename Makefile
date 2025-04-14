@@ -11,21 +11,21 @@ LIBS = `$(LLVMCONFIG) --libs`
 
 parser.o : parser_y parser_cpp 
 
-parser_cpp: parser/parser.cpp 
+parser_cpp: src/parser/parser.cpp 
 	@clang++ -gfull -c $(CPPFLAGS) -o $(BIN)/parser.o $^
 
-parser_y: parser/parser.y
-	@bison -d -o parser/parser.cpp $^
+parser_y: src/parser/parser.y
+	@bison -d -o src/parser/parser.cpp $^
 
 ###############################################
 
 lexer.o: lexer_l lexer_cpp 
 
-lexer_cpp: lexer/lexer.cpp 
+lexer_cpp: src/lexer/lexer.cpp 
 	@clang++ -gfull -c $(CPPFLAGS) -o $(BIN)/lexer.o $^
 
-lexer_l: lexer/lexer.l
-	@flex -olexer/lexer.cpp $^
+lexer_l: src/lexer/lexer.l
+	@flex -osrc/lexer/lexer.cpp $^
 
 ###############################################
 

@@ -12,7 +12,7 @@ typedef struct Location
     size_t start_column;
     size_t end_column;
 
-} Location;
+} YYLTYPE, Location;
 
 ///////////////////////////////////////////////////////////////////////////////
 /// \brief Create a Location Object
