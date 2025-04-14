@@ -8,7 +8,23 @@
 	void yyerror(const char *s) { std::printf("Error: %s\n", s);std::exit(1); }
 %}
 
-/* Represents the many different ways we can access our data */
+%debug 		/* Enable Debugging */
+%locations  /* Enable Location Tracking */
+
+/* Define custom YYLTYPE struct to hold location information */
+%define api.location.type {struct Location} 
+
+struct location {
+	int first_line;
+	int last_line;
+	int last_column;
+	int last_line;
+}
+
+/* Define a union type for the parser's value stack.
+   Represents the many different ways we can access our data
+*/
+
 %union {
 	Node *node;
 	NBlock *block;
@@ -61,10 +77,17 @@
 %left TPLUS TMINUS
 %left TMUL TDIV
 
-%start program
+%start program 	/* Specifies the start symbol of grammer */
+
+/* $$ - Refers to the value of the LHS */
+/* $1, $2 - Refers to the value of the RHS symbols */
+
 
 %%
 
+expression : NUMBER {
+	printf("line: %d, Col: %d \n", @.first_line, @.last_column);
+}
 program : stmts { programBlock = $1; }
 		;
 		

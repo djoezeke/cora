@@ -4,8 +4,11 @@
 #include <string>
 
 #include "ast/node.hpp"
-#include "lexer/tokenize.hpp"
+#include "lexer/tokens.hpp"
+#include "lexer/source.hpp"
 #include "parser/parser.hpp"
+
+#define YYSTYPE Token   /* Define own Token Structure */
 
 #define SAVE_TOKEN yylval.string = new std::string(yytext, yyleng)
 #define SAVE_INTEGER yylval.integer = std::stoll(std::string(yytext, yyleng))
@@ -19,15 +22,10 @@
 #define SYM_TOKEN(t) TOKEN(t)
 #define OPP_TOKEN(t) TOKEN(t)
 
-#ifdef _MSC_VER
-int isatty(int) {return 0;};
-#endif
-
 extern "C" int yywrap() { return 1; }
 
-int yycolumn = 1;
-
 #define YYERROR_VERBOSE 1
+
 int yyerror(char const * s )
 {
     printf("ERROR %s in '%s' at line %d col %d\n", s, yytext, yylineno, yycolumn);
@@ -35,75 +33,154 @@ int yyerror(char const * s )
     return 1;
 }
 
-std::string g_str;
-int parsing_error = 0;
+/* yychar - The current lookahead token */
+/* yylvar - The value of current token */
+/* yylloc - The location of current token */
+/* yyin - Function Pointer for Input */
+/* yyout - Function Pointer for Output */
 
-std::stack<std::string> fileNames;
-std::stack<int> lineNo;
-std::vector<std::string> libPaths;
+std::string g_str;
+
+std::stack<sourcefile> sourceFile;
+
+size_t yycolumn  = 1 ;       /* To Track Column Number */
+
 
 #define YY_USER_ACTION do { \
-    if( yylloc.last_line < yylineno ) yycolumn = 1 ; \
-    yylloc.first_line = yylloc.last_line = yylineno; \
-    yylloc.first_column = yycolumn; yylloc.last_column = yycolumn + (int)yyleng - 1; \
-    yycolumn += (int)yyleng; \
-    yylloc.file_name = fileNames.top(); \
+        if( yylloc.end_line < yylineno )\
+        {\
+            yycolumn = 1 ; \
+        }\
+        yylloc.start_line = yylloc.endl_line = yylineno; \
+        yylloc.start_column = yycolumn;\
+        yylloc.end_column = yycolumn + (int)yyleng - 1; \
+        yycolumn += (int)yyleng; \
     } while(0) ;
 
-int first_time = 1 ;
 
 %}
 
-%option yylineno
+%option yylineno    /* Enable line counting */
+%option noyywrap    /* Disable yywrap() function */
+%option stack       /* Enable use of stack to store DFA Table */
+%option verbose     /* Generate Verbose Output */
+%option warn        /* Enable Warnnings */
 
-%s normal 
-%x str qstr
+%s normal           /* %s - Define Exclusive Start Condition */
+%x str qstr         /* %x - Define Inclusive Start Condition */
 %x comment
 %x include
 
-whitespace = [ \f\t]*
-comment = #[^\r\n]*
-ignore = {whitespace} + (\\\r?\n'|{whitespace})({comment})?
-name = \w+
+whitespace  [ \f\t]*
+linecomment #[^\r\n]*
+ignore      {whitespace} + (\\\r?\n'|{whitespace})({linecomment})?
+name        \w+
 
-hexnumber = 0[xX](?:_?[0-9a-fA-F])+
-binnumber = 0[bB](?:_?[01])+
-octnumber = 0[oO](?:_?[0-7])+
-decnumber = (?:0(?:_?0)*|[1-9](?:_?[0-9])*)
-exponent = [eE][-+]?[0-9](?:_?[0-9])*
+hexnumber   0[xX](?:_?[0-9a-fA-F])+
+binnumber   0[bB](?:_?[01])+
+octnumber   0[oO](?:_?[0-7])+
+decnumber   (?:0(?:_?0)*|[1-9](?:_?[0-9])*)
+exponent    [eE][-+]?[0-9](?:_?[0-9])*
 
-intnumber = ({hexnumber}|{binnumber}|{octnumber}|{decnumber})
-pointfloat = ([0-9](?:_?[0-9])*\.(?:[0-9](?:_?[0-9])*)?|\.[0-9](?:_?[0-9])*')({exponent})?
-expfloat = [0-9](?:_?[0-9])*{exponent}
-floatnumber = (pointfloat|Expfloat)
-imagnumber = ([0-9](?:_?[0-9])*[jJ]|{floatnumber}[jJ])
-number = ({imagnumber}|{floatnumber}|{intnumber})
+intnumber   ({hexnumber}|{binnumber}|{octnumber}|{decnumber})
+pointfloat  ([0-9](?:_?[0-9])*\.(?:[0-9](?:_?[0-9])*)?|\.[0-9](?:_?[0-9])*')({exponent})?
+expfloat    [0-9](?:_?[0-9])*{exponent}
+floatnumber (pointfloat|exponent)
+imagnumber  ([0-9](?:_?[0-9])*[jJ]|{floatnumber}[jJ])
+number      ({imagnumber}|{floatnumber}|{intnumber})
 
 %%
 
-<<EOF>>         {
+\n              { yylval = CreateToken(EOL,yytext,yylineno,column);yylineno++; column = 1;return T_EOL;}    
+.               {column++;}         
+
+"if"             { yylval = CreateToken(KEYWORD,yytext,yylineno,column); column+=yyleng;return T_IF;}
+
+import              BEGIN(include);
+<include>[ \t]*        /* eat the whitespace */
+<include>[^ \t\n\r]+   {
+                        /* got the include file name */
+                        std::string fileName = yytext;
+                        std::size_t pos = fileName.find(".toy");
+
+                        if( pos == std::string::npos ) {
+                            fileName += ".toy";
+                        }
+
+                        for( auto libpath : filePaths ) {
+                            yyin = fopen( (libpath + fileName).c_str() , "r" );
+                            if( yyin )
+                                break;
+                        }
+
+                        if ( !yyin ) {
+                            printf( "%s in %s line %d\n", (std::string("Failed to load import file ") + fileName).c_str(), sourceFile.top().c_str(), yylineno );
+                            parsing_error = 1;
+                            yyterminate();
+                        } else {
+                            sourceFile.push(yytext);
+                            lineNumber.push(yylineno);
+                            yylineno = yycolumn = 1;
+                            yylloc.first_line = yylloc.first_column =  yylloc.last_line = yylloc.last_column = 1;
+                            yypush_buffer_state(yy_create_buffer( yyin, YY_BUF_SIZE ));
+                        }
+                        BEGIN(normal);
+                    }
+
+\@\{                BEGIN(comment);
+<comment>\@\}.*     BEGIN(normal);
+<comment>.*         ;/* eat everything */
+<comment>\n         ;/* eat everything */
+
+\"      g_str = ""; BEGIN(str);
+'       g_str = ""; BEGIN(qstr);
+
+<str>\" {   BEGIN(normal);
+            yylval.string = new std::string(g_str);
+            return T_STRING;
+        }
+
+<qstr>' {   BEGIN(normal);
+            yylval.string = new std::string(g_str);
+            return T_STRING;
+        }
+
+<str,qstr>\\n   g_str += "\n";
+<str,qstr>\\t   g_str += "\t";
+<str,qstr>\\r   g_str += "\r";
+<str>\\\"       g_str += "\"";
+<qstr>\\\'      g_str += "'";
+
+<str,qstr>\\(.|\n)  g_str += yytext[1];
+
+<str>[^\\\"]+  g_str += std::string(yytext);
+<qstr>[^\\']+  g_str += std::string(yytext);
+
+
+<normal>"\n"    { yycolumn = 1; }
+
+<<EOF>>         /* Define an Action for the EOF Condition */ 
+                {
                    if( curr_indents.size() > 1 ) {
                         curr_indents.pop();
                         return TOKEN(UNINDENT);
                    }
-                   if(lineNo.size() > 1 ) {
+                   if(lineNumber.size() > 1 ) {
                        yypop_buffer_state();
-                       fileNames.pop();
-                       yylineno = lineNo.top();
-                       lineNo.pop();
+                       sourceFile.pop();
+                       yylineno = lineNumber.top();
+                       lineNumber.pop();
                    } else {
                         yyterminate();
                    }
                 }
-                  
 
-[a-zA-Z_][a-zA-Z0-9_&%\$\?\-]*  SAVE_TOKEN; return T_IDENTIFIER;
--?[0-9]+                        SAVE_INTEGER; return T_INTEGER;
-[0-9]+\.[0-9]* 			        SAVE_TOKEN; return T_DOUBLE;
+{name}                  SAVE_TOKEN; return T_IDENTIFIER;
+{intnumber}             SAVE_INTEGER; return T_INTEGER;
+{floatnumber} 			SAVE_TOKEN; return T_DOUBLE;
 
-\r                              /* cr are ignored */
-[ \t\n]                         /* ignore */;
-#.*                             /* single line comments ignore */
+{ignore}                /* ignore spaces and others */;
+{linecomment}           /* single line comments ignore */;
 
 "true"                  SAVE_BOOLEAN; return T_BOOL;
 "false"                 SAVE_BOOLEAN; return T_BOOL;
@@ -140,7 +217,6 @@ number = ({imagnumber}|{floatnumber}|{intnumber})
 "<"                     return OPP_TOKEN(T_LESS);
 ">="                    return OPP_TOKEN(T_GREATEREQUAL);
 "<="                    return OPP_TOKEN(T_LESSEQUAL);
-
 
 "<<"                    return OPP_TOKEN(T_LEFTSHIFT);
 "<<="                   return OPP_TOKEN(T_LEFTSHIFTEQUAL);

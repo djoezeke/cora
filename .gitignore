@@ -1,20 +1,28 @@
 .vscode/**
-parser/*.cpp
-parser/*.hpp
-parser/*.h
 
-lexer/*.cpp
-lexer/*.hpp
-lexer/*.h
+src/toy/*.cpp
+src/toy/*.hpp
+src/toy/*.h
 
-codegen/**
-example/**
-codegen/**
-visitor/**
-builtin/**
+src/parser/*.cpp
+src/parser/*.hpp
+src/parser/*.h
+
+src/lexer/lexer.cpp
+src/lexer/lexer.hpp
+
+src/codegen/**
+src/codegen/**
+src/visitor/**
+src/builtin/**
+src/utils/**
+src/ast/**
+
+sample/**
+build/**
 bin/**
-ast/**
 
-*.cpp
-*.py
-*.c
+/*.txt
+/*.cpp
+/*.py
+/*.c
