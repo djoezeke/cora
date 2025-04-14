@@ -9,10 +9,9 @@
 #include <stack>
 #include <string>
 
-#include "ast/node.hpp"
-#include "lexer/tokens.hpp"
-#include "lexer/source.hpp"
-#include "parser/parser.hpp"
+#include "src/lexer/tokens.hpp"
+#include "src/lexer/source.hpp"
+#include "src/parser/parser.hpp"
 
 #define YYSTYPE Token   /* Define own Token Structure */
 
@@ -45,10 +44,6 @@ int yyerror(char const * s )
 /* yyin - Function Pointer for Input */
 /* yyout - Function Pointer for Output */
 
-std::string g_str;
-
-std::stack<sourcefile> sourceFile;
-
 size_t yycolumn  = 1 ;       /* To Track Column Number */
 
 
@@ -63,27 +58,16 @@ size_t yycolumn  = 1 ;       /* To Track Column Number */
         yycolumn += (int)yyleng; \
     } while(0) ;
 
-
 %}
 
 
 /* %s - Define Exclusive Start Condition */
 /* %x - Define Inclusive Start Condition */
 
-%s normal           
-%x str qstr         
-%x comment
-%x include
-
 whitespace  [ \f\t]*
 linecomment #[^\r\n]*
 ignore      {whitespace}(\\\r?\n'|{whitespace})({linecomment})?
 name        \w+
-
-dig     [0-9]
-num1    [-+]?{dig}+\.([eE][-+]?{dig}+)?
-num2    [-+]?{dig}*\.{dig}+([eE][-+]?{dig}+)?
-number  {num1}|{num2}
 
 hexnumber   0[xX](?:_?[0-9a-fA-F])+
 binnumber   0[bB](?:_?[01])+
@@ -98,193 +82,135 @@ floatnumber (pointfloat|exponent)
 imagnumber  ([0-9](?:_?[0-9])*[jJ]|{floatnumber}[jJ])
 number      {imagnumber}|{floatnumber}|{intnumber}
 
+charater    \'[.]\'
+
 %%
-
-import              BEGIN(incl);
-<incl>[ \t]*        /* eat the whitespace */
-<incl>[^ \t\n\r]+   { /* got the include file name */
-                    std::string fileName = yytext;
-                    std::size_t pos = fileName.find(".liq");
-                    if( pos == std::string::npos ) {
-                        fileName += ".liq";
-                    }
-                    for( auto libpath : libPaths ) {
-                        yyin = fopen( (libpath + fileName).c_str() , "r" );
-                        if( yyin )
-                            break;
-                    }
-                    if ( ! yyin ) {
-                       printf( "%s in %s line %d\n", (std::string("Failed to load import file ") + fileName).c_str(), fileNames.top().c_str(), yylineno );
-                       parsing_error = 1;
-                       yyterminate();
-                    } else {
-                       fileNames.push(yytext);
-                       lineNo.push(yylineno);
-                       yylineno = yycolumn = 1;
-                       yylloc.first_line = yylloc.first_column =  yylloc.last_line = yylloc.last_column = 1;
-                       yypush_buffer_state(yy_create_buffer( yyin, YY_BUF_SIZE ));
-                    }
-                    BEGIN(normal);
-                    }
-     
-
-\n              { Token token = SAVE_TOKEN(EOL);yylineno++; column = 1;return token;}    
-.               {yycolumn++;}         
-
-"if"             { Token token = SAVE_TOKEN(T_KEYWORD); yycolumn+=yyleng;return token;}
-
-import              BEGIN(include);
-<include>[ \t]*        /* eat the whitespace */
-<include>[^ \t\n\r]+   {
-                        /* got the include file name */
-                        std::string fileName = yytext;
-                        std::size_t pos = fileName.find(".toy");
-
-                        if( pos == std::string::npos ) {
-                            fileName += ".toy";
-                        }
-
-                        for( auto libpath : filePaths ) {
-                            yyin = fopen( (libpath + fileName).c_str() , "r" );
-                            if( yyin )
-                                break;
-                        }
-
-                        if ( !yyin ) {
-                            printf( "%s in %s line %d\n", (std::string("Failed to load import file ") + fileName).c_str(), sourceFile.top().c_str(), yylineno );
-                            parsing_error = 1;
-                            yyterminate();
-                        } else {
-                            sourceFile.push(yytext);
-                            lineNumber.push(yylineno);
-                            yylineno = yycolumn = 1;
-                            yylloc.first_line = yylloc.first_column =  yylloc.last_line = yylloc.last_column = 1;
-                            yypush_buffer_state(yy_create_buffer( yyin, YY_BUF_SIZE ));
-                        }
-                        BEGIN(normal);
-                    }
-
-\@\{                BEGIN(comment);
-<comment>\@\}.*     BEGIN(normal);
-<comment>.*         ;/* eat everything */
-<comment>\n         ;/* eat everything */
-
-\"      g_str = ""; BEGIN(str);
-'       g_str = ""; BEGIN(qstr);
-
-<str>\" {   BEGIN(normal);
-            yylval.string = new std::string(g_str);
-            return T_STRING;
-        }
-
-<qstr>' {   BEGIN(normal);
-            yylval.string = new std::string(g_str);
-            return T_STRING;
-        }
-
-<str,qstr>\\n   g_str += "\n";
-<str,qstr>\\t   g_str += "\t";
-<str,qstr>\\r   g_str += "\r";
-<str>\\\"       g_str += "\"";
-<qstr>\\\'      g_str += "'";
-
-<str,qstr>\\(.|\n)  g_str += yytext[1];
-
-<str>[^\\\"]+  g_str += std::string(yytext);
-<qstr>[^\\']+  g_str += std::string(yytext);
-
-
-<normal>"\n"    { yycolumn = 1; }
-
-<<EOF>>         /* Define an Action for the EOF Condition */ {
-                   if( curr_indents.size() > 1 ) {
-                        curr_indents.pop();
-                        return TOKEN(UNINDENT);
-                   }
-                   if(lineNumber.size() > 1 ) {
-                       yypop_buffer_state();
-                       sourceFile.pop();
-                       yylineno = lineNumber.top();
-                       lineNumber.pop();
-                   } else {
-                        yyterminate();
-                   }
-                }
-
-{name}                  {SAVE_TOKEN; return T_IDENTIFIER;}
-{floatnumber} 			SAVE_TOKEN; return T_DOUBLE;
 
 {ignore}                /* ignore spaces and others */;
 {linecomment}           /* single line comments ignore */;
 
-"true"                  SAVE_BOOLEAN; return T_BOOL;
-"false"                 SAVE_BOOLEAN; return T_BOOL;
+{name}                  {SAVE_IDENTIFIER; return T_IDENTIFIER;}
 
-"extern"                return KEY_TOKEN(TEXTERN);
-"return"				return KEY_TOKEN(TRETURN);
-"if"                    return KEY_TOKEN(TIF);
-"else"                  return KEY_TOKEN(TELSE);
-"return"                return KEY_TOKEN(TRETURN);
-"not"                   return KEY_TOKEN(TNOT);
-"and"                   return KEY_TOKEN(TAND);
-"or"                    return KEY_TOKEN(TOR);
-"def"                   return KEY_TOKEN(TDEF);
-"var"                   return KEY_TOKEN(TVAR);
-"while"                 return KEY_TOKEN(TWHILE);
+{hexnumber} 			{SAVE_INTEGER; return T_INTEGER;}
+{binnumber} 			{SAVE_INTEGER; return T_INTEGER;}
+{octnumber} 			{SAVE_INTEGER; return T_INTEGER;}
+{decnumber} 			{SAVE_INTEGER; return T_INTEGER;}
+{exponent} 		    	{SAVE_INTEGER; return T_INTEGER;}
 
-"*"                     return OPP_TOKEN(T_STAR);
-"*="                    return OPP_TOKEN(T_STAREQUAL);
-"+"                     return OPP_TOKEN(T_PLUS);
-"+="                    return OPP_TOKEN(T_PLUSEQUAL);
-"-"                     return OPP_TOKEN(T_MINUS);
-"-="                    return OPP_TOKEN(T_MINEQUAL);
-"/"                     return OPP_TOKEN(T_SLASH);
-"/="                    return OPP_TOKEN(T_SLASHEQUAL);
-"//"                    return OPP_TOKEN(T_DOUBLESLASH);
-"//="                   return OPP_TOKEN(T_DOUBLESLASHEQUAL);
-"%"                     return OPP_TOKEN(T_PERCENT);
-"%="                    return OPP_TOKEN(T_PERCENTEQUAL);
-"**"                    return OPP_TOKEN(T_DOUBLESTAR);
-"**="                   return OPP_TOKEN(T_DOUBLESTAREQUAL);
+{pointfloat} 			{SAVE_NUMBER; return T_NUMBER;}
+{expfloat} 	    		{SAVE_NUMBER; return T_NUMBER;}
 
-"=="                    return OPP_TOKEN(T_EQEQUAL);
-">"                     return OPP_TOKEN(T_GREATER);
-"<"                     return OPP_TOKEN(T_LESS);
-">="                    return OPP_TOKEN(T_GREATEREQUAL);
-"<="                    return OPP_TOKEN(T_LESSEQUAL);
+true 		        	{SAVE_BOOLEAN; return T_BOOLEAN;}
+false        			{SAVE_BOOLEAN; return T_BOOLEAN;}
 
-"<<"                    return OPP_TOKEN(T_LEFTSHIFT);
-"<<="                   return OPP_TOKEN(T_LEFTSHIFTEQUAL);
-">>"                    return OPP_TOKEN(T_RIGHTSHIFT);
-">>="                   return OPP_TOKEN(T_RIGHTSHIFTEQUAL);
-"^"                     return OPP_TOKEN(T_CIRCUMFLEX);
-"^="                    return OPP_TOKEN(T_CIRCUMFLEXEQUAL);
-"&"                     return OPP_TOKEN(T_AMPER);
-"&="                    return OPP_TOKEN(T_AMPEREQUAL);
-"!"                     return OPP_TOKEN(T_NOT);
-"!="                    return OPP_TOKEN(T_NOTEQUAL);
-"|"                     return OPP_TOKEN(T_VBAR);
-"|="                    return OPP_TOKEN(T_VBAREQUAL);
+{charater} 			    {SAVE_CHARATER; return T_CHARATER;}
+{floatnumber} 			{SAVE_STRING; return T_STRING;}
+{floatnumber} 			{SAVE_BYTE; return T_BYTE;}
+{floatnumber} 			{SAVE_DOC; return T_DOC;}
 
-"."                     return SYM_TOKEN(T_DOT);
-"["                     return SYM_TOKEN(T_LSQB);
-"]"                     return SYM_TOKEN(T_RSQB);
-"("                     return SYM_TOKEN(T_LPAR);
-")"                     return SYM_TOKEN(T_RPAR);
-"{"                     return SYM_TOKEN(T_LBRACE);
-"}"                     return SYM_TOKEN(T_RBRACE);
-"~"                     return SYM_TOKEN(T_TILDE);
-","                     return SYM_TOKEN(T_COMMA);
-"->"                    return SYM_TOKEN(T_RARROW);
-"::"                    return SYM_TOKEN(T_DOUBLECOLON);
-":"                     return SYM_TOKEN(T_COLON);
-":="                    return SYM_TOKEN(T_COLONEQUAL);
-";"                     return SYM_TOKEN(T_SEMI);
-"="                     return SYM_TOKEN(T_EQUAL);
-"@"                     return SYM_TOKEN(T_AT);
-"@="                    return SYM_TOKEN(T_ATEQUAL);
-"..."                   return SYM_TOKEN(T_ELLIPSIS);
 
-.                       printf("line %d, len %d Unknown token %s !\n", yylineno, yyleng, yytext); yyterminate();
+int         {KEY_TOKEN(T_IMPORT); return T_INT;}
+float       {KEY_TOKEN(T_IMPORT); return T_IMPORT;}
+double      {KEY_TOKEN(T_IMPORT); return T_IMPORT;}
+bool        {KEY_TOKEN(T_IMPORT); return T_IMPORT;}
+void        {KEY_TOKEN(T_IMPORT); return T_IMPORT;}
+
+signed      {KEY_TOKEN(T_IMPORT); return T_IMPORT;}
+unsigned    {KEY_TOKEN(T_IMPORT); return T_IMPORT;}
+short       {KEY_TOKEN(T_IMPORT); return T_IMPORT;}
+long        {KEY_TOKEN(T_IMPORT); return T_IMPORT;}
+
+if          {KEY_TOKEN(T_IMPORT); return T_IMPORT;}
+else        {KEY_TOKEN(T_IMPORT); return T_IMPORT;}
+switch      {KEY_TOKEN(T_IMPORT); return T_IMPORT;}
+case        {KEY_TOKEN(T_IMPORT); return T_IMPORT;}
+default     {KEY_TOKEN(T_IMPORT); return T_IMPORT;}
+for         {KEY_TOKEN(T_IMPORT); return T_IMPORT;}
+while       {KEY_TOKEN(T_IMPORT); return T_IMPORT;}
+goto        {KEY_TOKEN(T_IMPORT); return T_IMPORT;}
+do          {KEY_TOKEN(T_IMPORT); return T_IMPORT;}
+break       {KEY_TOKEN(T_IMPORT); return T_IMPORT;}
+continue    {KEY_TOKEN(T_IMPORT); return T_IMPORT;}
+
+class       {KEY_TOKEN(T_IMPORT); return T_IMPORT;}
+union       {KEY_TOKEN(T_IMPORT); return T_IMPORT;}
+private     {KEY_TOKEN(T_IMPORT); return T_IMPORT;}
+protected   {KEY_TOKEN(T_IMPORT); return T_IMPORT;}
+public      {KEY_TOKEN(T_IMPORT); return T_IMPORT;}
+self        {KEY_TOKEN(T_IMPORT); return T_IMPORT;}
+
+try         {KEY_TOKEN(T_IMPORT); return T_IMPORT;}
+catch       {KEY_TOKEN(T_IMPORT); return T_IMPORT;}
+throw       {KEY_TOKEN(T_IMPORT); return T_IMPORT;}
+
+sizeof      {KEY_TOKEN(T_IMPORT); return T_IMPORT;}
+typeid      {KEY_TOKEN(T_IMPORT); return T_IMPORT;}
+typeof      {KEY_TOKEN(T_IMPORT); return T_IMPORT;}
+offsetof    {KEY_TOKEN(T_IMPORT); return T_IMPORT;}
+
+new         {KEY_TOKEN(T_IMPORT); return T_IMPORT;}
+delete      {KEY_TOKEN(T_IMPORT); return T_IMPORT;}
+
+fun         {KEY_TOKEN(T_IMPORT); return T_IMPORT;}
+void        {KEY_TOKEN(T_IMPORT); return T_IMPORT;}
+
+static      {KEY_TOKEN(T_IMPORT); return T_IMPORT;}
+extern      {KEY_TOKEN(T_IMPORT); return T_IMPORT;}
+const       {KEY_TOKEN(T_IMPORT); return T_IMPORT;}
+
+
+"*"    {OPP_TOKEN(T_IMPORT); return T_IMPORT;}
+"*="   {OPP_TOKEN(T_IMPORT); return T_IMPORT;}
+"+"    {OPP_TOKEN(T_IMPORT); return T_IMPORT;}
+"+="   {OPP_TOKEN(T_IMPORT); return T_IMPORT;}
+"-"    {OPP_TOKEN(T_IMPORT); return T_IMPORT;}
+"-="   {OPP_TOKEN(T_IMPORT); return T_IMPORT;}
+"/"    {OPP_TOKEN(T_IMPORT); return T_IMPORT;}
+"/="   {OPP_TOKEN(T_IMPORT); return T_IMPORT;}
+"//"   {OPP_TOKEN(T_IMPORT); return T_IMPORT;}
+"//="  {OPP_TOKEN(T_IMPORT); return T_IMPORT;}
+"%"    {OPP_TOKEN(T_IMPORT); return T_IMPORT;}
+"%="   {OPP_TOKEN(T_IMPORT); return T_IMPORT;}
+"**"   {OPP_TOKEN(T_IMPORT); return T_IMPORT;}
+"**="  {OPP_TOKEN(T_IMPORT); return T_IMPORT;}
+
+"=="   {OPP_TOKEN(T_IMPORT); return T_IMPORT;}
+">"    {OPP_TOKEN(T_IMPORT); return T_IMPORT;}
+"<"    {OPP_TOKEN(T_IMPORT); return T_IMPORT;}
+">="   {OPP_TOKEN(T_IMPORT); return T_IMPORT;}
+"<="   {OPP_TOKEN(T_IMPORT); return T_IMPORT;}
+
+"<<"   {OPP_TOKEN(T_IMPORT); return T_IMPORT;}
+"<<="  {OPP_TOKEN(T_IMPORT); return T_IMPORT;}
+">>"   {OPP_TOKEN(T_IMPORT); return T_IMPORT;}
+">>="  {OPP_TOKEN(T_IMPORT); return T_IMPORT;}
+"^"    {OPP_TOKEN(T_IMPORT); return T_IMPORT;}
+"^="   {OPP_TOKEN(T_IMPORT); return T_IMPORT;}
+"&"    {OPP_TOKEN(T_IMPORT); return T_IMPORT;}
+"&="   {OPP_TOKEN(T_IMPORT); return T_IMPORT;}
+"!"    {OPP_TOKEN(T_IMPORT); return T_IMPORT;}
+"!="   {OPP_TOKEN(T_IMPORT); return T_IMPORT;}
+"|"    {OPP_TOKEN(T_IMPORT); return T_IMPORT;}
+"|="   {OPP_TOKEN(T_IMPORT); return T_IMPORT;}
+
+
+"."    {SYM_TOKEN(T_IMPORT); return T_IMPORT;}
+"["    {SYM_TOKEN(T_IMPORT); return T_IMPORT;}
+"]"    {SYM_TOKEN(T_IMPORT); return T_IMPORT;}
+"("    {SYM_TOKEN(T_IMPORT); return T_IMPORT;}
+")"    {SYM_TOKEN(T_IMPORT); return T_IMPORT;}
+"{"    {SYM_TOKEN(T_IMPORT); return T_IMPORT;}
+"}"    {SYM_TOKEN(T_IMPORT); return T_IMPORT;}
+"~"    {SYM_TOKEN(T_IMPORT); return T_IMPORT;}
+","    {SYM_TOKEN(T_IMPORT); return T_IMPORT;}
+"->"   {SYM_TOKEN(T_IMPORT); return T_IMPORT;}
+"::"   {SYM_TOKEN(T_IMPORT); return T_IMPORT;}
+":"    {SYM_TOKEN(T_IMPORT); return T_IMPORT;}
+":="   {SYM_TOKEN(T_IMPORT); return T_IMPORT;}
+";"    {SYM_TOKEN(T_IMPORT); return T_IMPORT;}
+"="    {SYM_TOKEN(T_IMPORT); return T_IMPORT;}
+"@"    {SYM_TOKEN(T_IMPORT); return T_IMPORT;}
+"@="   {SYM_TOKEN(T_IMPORT); return T_IMPORT;}
+"..."  {SYM_TOKEN(T_IMPORT); return T_IMPORT;}
 
 %%

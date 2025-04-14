@@ -9,7 +9,7 @@
 
 /*
  import  KEY_TOKEN(T_IMPORT); return T_IMPORT;
- 
+
 */
 
 #include "location.hpp"
@@ -28,9 +28,9 @@ typedef enum TokenType
   // DATA TYPES
   T_IDENTIFIER,
   T_INTEGER,
-  T_FLOAT,
-  T_CHAR,
-  T_BOOL,
+  T_NUMBER,
+  T_CHARATER,
+  T_BOOLEAN,
   T_BYTE,
   T_DOC,
   T_STRING,
@@ -46,6 +46,7 @@ typedef enum TokenType
   T_COLON,
   T_COMMA,
   T_SEMI,
+  T_UNDERSCORE,
 
   // operators
   T_PLUS,
@@ -141,7 +142,7 @@ typedef enum TokenType
   T_DELETE,
 
   // FUNCTION
-  T_VOID,
+  T_FUN,
   T_RETURN,
 
   // STORAGE CLASSES
@@ -149,7 +150,6 @@ typedef enum TokenType
   T_EXTERN,
   T_CONST,
 
-  T_UNDERSCORE,
   T_EOF,
 
 } TokenType;

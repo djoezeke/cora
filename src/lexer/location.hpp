@@ -24,8 +24,15 @@ typedef struct Location
 //
 /// \return Location Object
 ///////////////////////////////////////////////////////////////////////////////
-Location location(size_t startline, size_t endline, size_t startcolumn, size_t endcolumn) {
+Location location(size_t startline, size_t endline, size_t startcolumn, size_t endcolumn)
+{
+    Location loc;
+    loc.start_line = startline;
+    loc.end_line = endline;
+    loc.start_column = startcolumn;
+    loc.end_column = endcolumn;
 
+    return loc;
 };
 
 #endif // TOY_LEXER_LOCATION_H
