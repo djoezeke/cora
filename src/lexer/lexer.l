@@ -91,15 +91,6 @@ charater    \'[.]\'
 
 {name}                  {SAVE_IDENTIFIER; return T_IDENTIFIER;}
 
-{hexnumber} 			{SAVE_INTEGER; return T_INTEGER;}
-{binnumber} 			{SAVE_INTEGER; return T_INTEGER;}
-{octnumber} 			{SAVE_INTEGER; return T_INTEGER;}
-{decnumber} 			{SAVE_INTEGER; return T_INTEGER;}
-{exponent} 		    	{SAVE_INTEGER; return T_INTEGER;}
-
-{pointfloat} 			{SAVE_NUMBER; return T_NUMBER;}
-{expfloat} 	    		{SAVE_NUMBER; return T_NUMBER;}
-
 true 		        	{SAVE_BOOLEAN; return T_BOOLEAN;}
 false        			{SAVE_BOOLEAN; return T_BOOLEAN;}
 
@@ -110,12 +101,12 @@ false        			{SAVE_BOOLEAN; return T_BOOLEAN;}
 
 
 int         {KEY_TOKEN(T_IMPORT); return T_INT;}
-float       {KEY_TOKEN(T_IMPORT); return T_IMPORT;}
-double      {KEY_TOKEN(T_IMPORT); return T_IMPORT;}
-bool        {KEY_TOKEN(T_IMPORT); return T_IMPORT;}
-void        {KEY_TOKEN(T_IMPORT); return T_IMPORT;}
+float       {KEY_TOKEN(T_IMPORT); return T_FLOAT;}
+double      {KEY_TOKEN(T_IMPORT); return T_DOUBLE;}
+bool        {KEY_TOKEN(T_IMPORT); return T_BOOL;}
+void        {KEY_TOKEN(T_IMPORT); return T_VOID;}
 
-signed      {KEY_TOKEN(T_IMPORT); return T_IMPORT;}
+signed      {KEY_TOKEN(T_IMPORT); return T_SIGNED;}
 unsigned    {KEY_TOKEN(T_IMPORT); return T_IMPORT;}
 short       {KEY_TOKEN(T_IMPORT); return T_IMPORT;}
 long        {KEY_TOKEN(T_IMPORT); return T_IMPORT;}

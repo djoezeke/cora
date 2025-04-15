@@ -1,0 +1,10 @@
+#ifndef TOY_AST_FUNCTION_H
+#define TOY_AST_FUNCTION_H
+
+#include "node.hpp"
+
+BEGIN_NAMESPACE
+
+END_NAMESPACE
+
+#endif // TOY_AST_FUNCTION_H

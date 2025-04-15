@@ -16,7 +16,6 @@ src/codegen/**
 src/visitor/**
 src/builtin/**
 src/utils/**
-src/ast/**
 
 sample/**
 build/**

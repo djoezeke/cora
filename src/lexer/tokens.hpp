@@ -7,6 +7,16 @@
 // % option verbose   /* Generate Verbose Output */
 // % option warn      /* Enable Warnnings */
 
+// {hexnumber} 			{SAVE_INTEGER; return T_INTEGER;}
+// {binnumber} 			{SAVE_INTEGER; return T_INTEGER;}
+// {octnumber} 			{SAVE_INTEGER; return T_INTEGER;}
+// {decnumber} 			{SAVE_INTEGER; return T_INTEGER;}
+// {exponent} 		  {SAVE_INTEGER; return T_INTEGER;}
+
+// {pointfloat} 			{SAVE_NUMBER; return T_NUMBER;}
+// {expfloat} 	    	{SAVE_NUMBER; return T_NUMBER;}
+
+
 /*
  import  KEY_TOKEN(T_IMPORT); return T_IMPORT;
 

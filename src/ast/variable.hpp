@@ -1,0 +1,10 @@
+#ifndef TOY_AST_VARIABLES_H
+#define TOY_AST_VARIABLES_H
+
+#include "expression.hpp"
+
+BEGIN_NAMESPACE
+
+END_NAMESPACE
+
+#endif // TOY_AST_VARIABLES_H
