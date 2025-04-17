@@ -1,0 +1,53 @@
+cmake_minimum_required(VERSION 3.12)
+
+project(liquid)
+
+# Setup the make environment. #
+################################
+# Activate very verbose makefiles.
+set(CMAKE_VERBOSE_MAKEFILE OFF)
+# Allow else() and endif() constructs (with empty parentheses)
+set(CMAKE_ALLOW_LOOSE_LOOP_CONSTRUCTS true)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON) #To use with clang-tidy, not supported w/ MSVC generator.
+
+# Setup the cmake directory containing numerous cmake scripts and macros.
+set(CMAKE_MODULE_PATH "${liquid_SOURCE_DIR}/cmake")
+set(LLVM_ROOT "E:/LLVM")
+set(BISON_ROOT "E:/GnuWin")
+set(FLEX_ROOT "E:/GnuWin")
+
+
+add_subdirectory(src)
+
+# Set the visual studio start up project.
+if(MSVC)
+   set_property(DIRECTORY ${CMAKE_CURRENT_BINARY_DIR} PROPERTY VS_STARTUP_PROJECT liq)
+endif()
+
+# cmake_minimum_required(VERSION 3.10)
+# project(Toy)
+
+# set(CMAKE_C_STANDARD 99)
+# # set(FLEX_EXECUTABLE path) # -DFLEX_EXECUTABLE=path
+# # set(BISON_EXECUTABLE path) # -DBISON_EXECUTABLE=path
+# # set(LLVM_DIR path) # -LLVM_DIR=path_cmake
+
+# include_directories(CMAKE_BINARY_DIR)
+
+# find_package(FLEX REQUIRED)
+# find_package(BISON REQUIRED)
+
+# flex_target(lexer src/lexer/lexer.l{CMAKE_BINARY_DIR}/lexer.cpp)
+# bison_target(parser src/parser/parser.y{CMAKE_BINARY_DIR}/parser.cpp DEFINE_FILES{CMAKE_BINARY_DIR}/parser.hpp)
+
+# # flex
+# include_directories(src/lexer/)
+
+# # bison
+# include_directories(src/parser/)
+
+# add_executable(toyfront src/toy/main.cpp{BISON_parser_OUTPUTS}
+# ${FLEX_lexer_OUTPUTS} src/ast/ast.cpp)
+
+# find_package(LLVM REQUIRED CONFIG)
+# target_link_libraries(LLVM::LLVM)
