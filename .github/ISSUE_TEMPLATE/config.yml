@@ -1,0 +1,18 @@
+blank_issues_enabled: false
+
+contact_links:
+  - name: Cora Programming Language
+    url: https://github.com/djoezeke/cora
+    about: Modern Scripting Language.
+
+  - name: Cora Discussions 💖
+    url: https://github.com/djoezeke/cora/discussions
+    about: The "Discussions" forum is where you want to start.
+
+  - name: Cora Issues | Bug Bounty 🐞
+    url: https://github.com/djoezeke/cora/issues
+    about: Please report issues and vulnerabilities here.
+
+  - name: Cora Releases
+    url: https://github.com/djoezeke/cora/releases
+    about: Please latest Cora release here.
