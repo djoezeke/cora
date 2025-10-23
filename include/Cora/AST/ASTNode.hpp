@@ -193,6 +193,16 @@ namespace cora
 
             ~Program() override = default;
 
+            void PushBack(Module *module)
+            {
+                m_Modules.push_back(module);
+            };
+
+            void EmplaceBack(Module *module)
+            {
+                m_Modules.emplace_back(module);
+            };
+
         private:
             ModuleList m_Modules;
         };
@@ -204,6 +214,16 @@ namespace cora
                 : Node(NodeKind::Module, "Module") {};
 
             ~Module() override = default;
+
+            void PushBack(Statement *statement)
+            {
+                m_Statements.push_back(statement);
+            };
+
+            void EmplaceBack(Statement *statement)
+            {
+                m_Statements.emplace_back(statement);
+            };
 
         private:
             StatementList m_Statements;
