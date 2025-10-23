@@ -9,11 +9,11 @@ trim_trailing_whitespace = true
 # tab indentation
 [*.cpp]
 indent_style = space
-indent_size = 3
+indent_size = 4
 
 [*.hpp]
 indent_style = space
-indent_size = 3
+indent_size = 4
 
 [*.y]
 indent_style = space

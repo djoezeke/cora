@@ -1,48 +1,63 @@
-.vscode/**
+# Prerequisites
+*.d
 
-src/toy/*.cpp
-src/toy/*.hpp
-src/toy/*.h
+# Object files
+*.o
+*.ko
+*.obj
+*.elf
 
-src/parser/*.cpp
-src/parser/*.hpp
-src/parser/*.h
+# Linker output
+*.ilk
+*.map
+*.exp
 
-src/lexer/lexer.cpp
-src/lexer/lexer.hpp
+# Precompiled Headers
+*.gch
+*.pch
 
-src/codegen/**
-src/codegen/**
-src/visitor/**
-src/builtin/**
-src/utils/**
-
-sample/**
-build/**
-bin/**
-
-/*.txt
-/*.cpp
-/*.py
-/*.c
-
-*~
-*.out
+# Libraries
 *.lib
-*.user
-info/*
-*.output
-**/build
-**/Debug
-**/Release
-**/html
-**/.vscode
-**/.vs
-*.llvm
-**/*.txt
-**/*.org
-**/config.h
-CMakeSettings.json
-**/.clang-tidy
-**/.clang_complete
-!CMakeLists.txt
+*.a
+*.la
+*.lo
+
+# Shared objects (inc. Windows DLLs)
+*.dll
+*.so
+*.so.*
+*.dylib
+
+# Executables
+*.exe
+*.out
+*.app
+*.i*86
+*.x86_64
+*.hex
+
+# Debug files
+*.dSYM/
+*.su
+*.idb
+*.pdb
+
+# Kernel Module Compile Results
+*.mod*
+*.cmd
+.tmp_versions/
+modules.order
+Module.symvers
+Mkfile.old
+dkms.conf
+
+# debug information files
+*.dwo
+
+
+# Cora Artifacts
+
+sample/
+.vscode/
+**.l
+**.y
