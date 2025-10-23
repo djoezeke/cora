@@ -10,6 +10,7 @@ namespace cora
 
         class Statement : public Node
         {
+            ~Statement() override = default;
         };
 
     } // namespace ast

@@ -48,6 +48,8 @@ namespace cora
         class SourceRange
         {
         public:
+            SourceRange() = default;
+
             SourceRange(SourceLocation loc)
             {
                 m_Start = loc;

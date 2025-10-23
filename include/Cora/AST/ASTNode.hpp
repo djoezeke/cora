@@ -2,8 +2,10 @@
 #define CORA_AST_NODE_H
 
 #include <iostream>
+#include <utility>
 
 #include "Cora/Basic/SourceLocation.h"
+
 
 namespace cora
 {
@@ -51,6 +53,7 @@ namespace cora
 
             TryExpr,
             CallExpr,
+            BlockExpr,
             AssignExpr,
             BinaryExpr,
             TernaryExpr,
@@ -63,7 +66,7 @@ namespace cora
         {
         public:
             Node() = default;
-            virtual ~Node();
+            virtual ~Node() = default;
 
             Node(NodeKind valuekind) { m_Kind = valuekind; };
 
@@ -76,7 +79,7 @@ namespace cora
             Node(NodeKind nodekind, SourceRange sourcerange)
             {
                 m_Kind = nodekind;
-                m_Range = sourcerange;
+                m_Range = std::move(sourcerange);
             };
 
             Node(NodeKind nodekind, SourceLocation loc)
@@ -102,14 +105,14 @@ namespace cora
              *
              * @return NodeKind
              */
-            virtual NodeKind GetNodeKind() = 0;
+             NodeKind GetNodeKind() {return m_Kind;};
 
             /**
              * @brief Return the node kind string
              *
              * @return const std::string&
              */
-            virtual std::string GetNodeKindString() = 0;
+             std::string GetNodeKindString() {return m_KindString;};
 
             /**
              * @brief Get the start position of the node
@@ -173,7 +176,25 @@ namespace cora
             std::string m_KindString;
         };
 
-        std::ostream &operator<<(std::ostream &ostream, const Node *value);
+        std::ostream &operator<<(std::ostream &ostream, const Node *node);
+
+        class Statement;
+
+        class Program : public Node
+        {
+        private:
+        public:
+            Program();
+            ~Program() override = default;
+        };
+
+        class Module : public Node
+        {
+        private:
+        public:
+            Module();
+            ~Module() override = default;
+        };
 
     } // namespace ast
 
