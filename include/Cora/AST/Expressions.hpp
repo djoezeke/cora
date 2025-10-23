@@ -2,15 +2,11 @@
 #define CORA_AST_EXPRESSION_H
 
 #include "Cora/AST/ASTNode.hpp"
-#include <vector>
 
 namespace cora
 {
     namespace ast
     {
-
-        using StatementList = std::vector<class Statement *>;
-        using ExpressionList = std::vector<class Expression *>;
 
         /**
          * Expression AST node representation
@@ -18,7 +14,15 @@ namespace cora
         class Expression : public Node
         {
         public:
+            Expression()
+                : Node(NodeKind::Expression, "Expression") {};
+
             ~Expression() override = default;
+
+            ExpressionKind GetExprKind() const {return m_ExprKind;};
+            
+        private:
+            ExpressionKind m_ExprKind;
         };
 
         /**
@@ -176,6 +180,13 @@ namespace cora
         public:
             explicit TryExpr() {};
             ~TryExpr() override = default;
+        };
+
+        class CastExpr : public Expression
+        {
+        public:
+            explicit CastExpr() {};
+            ~CastExpr() override = default;
         };
 
         class CallExpr : public Expression

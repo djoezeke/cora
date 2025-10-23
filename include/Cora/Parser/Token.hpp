@@ -157,14 +157,37 @@ namespace cora
 		public:
 			Token() = default;
 
-			Token(TokenKind tokenkind, std::string tokentext) { m_Kind = tokenkind, m_TokenText = tokentext; };
+			Token(TokenKind tokenkind, std::string tokentext, unsigned int line, unsigned int column)
+			{
+				m_Kind = tokenkind, m_TokenText = tokentext;
+				SourceLocation start(line, column);
+				SourceLocation end(line, column + tokentext.size());
+				m_Range = SourceRange(start, end);
+			};
 
-			Token(TokenKind tokenkind) { m_Kind = tokenkind; };
+			Token(TokenKind tokenkind, unsigned int line, unsigned int column)
+			{
+				m_Kind = tokenkind;
+				SourceLocation start(line, column);
+				m_Range = SourceRange(start);
+			};
 
-			Token(TokenKind tokenkind, std::string kinsdtring)
+			Token(TokenKind tokenkind, std::string kinsdtring, unsigned int line, unsigned int column)
 			{
 				m_Kind = tokenkind;
 				m_KindString = kinsdtring;
+				SourceLocation start(line, column);
+				m_Range = SourceRange(start);
+			};
+
+			Token(TokenKind tokenkind, std::string kinsdtring, std::string tokentext, unsigned int line, unsigned int column)
+			{
+				m_Kind = tokenkind;
+				m_KindString = kinsdtring;
+				m_TokenText = tokentext;
+				SourceLocation start(line, column);
+				SourceLocation end(line, column + tokentext.size());
+				m_Range = SourceRange(start, end);
 			};
 
 			/**

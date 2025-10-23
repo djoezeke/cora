@@ -3,9 +3,9 @@
 
 #include <iostream>
 #include <utility>
+#include <vector>
 
 #include "Cora/Basic/SourceLocation.h"
-
 
 namespace cora
 {
@@ -13,6 +13,10 @@ namespace cora
 
     namespace ast
     {
+
+        using ModuleList = std::vector<class Module *>;
+        using StatementList = std::vector<class Statement *>;
+        using ExpressionList = std::vector<class Expression *>;
 
         enum class NodeKind
         {
@@ -27,12 +31,14 @@ namespace cora
             IfStmt,
             DoStmt,
             ForStmt,
+            NewStmt,
             PassStmt,
             WhileStmt,
             BreakStmt,
             BraceStmt,
             YieldStmt,
             ThrowStmt,
+            DeleteStmt,
             SwitchStmt,
             ReturnStmt,
             ForEachStmt,
@@ -52,6 +58,7 @@ namespace cora
             Identifier,
 
             TryExpr,
+            CastExpr,
             CallExpr,
             BlockExpr,
             AssignExpr,
@@ -105,14 +112,14 @@ namespace cora
              *
              * @return NodeKind
              */
-             NodeKind GetNodeKind() {return m_Kind;};
+            NodeKind GetNodeKind() { return m_Kind; };
 
             /**
              * @brief Return the node kind string
              *
              * @return const std::string&
              */
-             std::string GetNodeKindString() {return m_KindString;};
+            std::string GetNodeKindString() { return m_KindString; };
 
             /**
              * @brief Get the start position of the node
@@ -178,22 +185,28 @@ namespace cora
 
         std::ostream &operator<<(std::ostream &ostream, const Node *node);
 
-        class Statement;
-
         class Program : public Node
         {
-        private:
         public:
-            Program();
+            Program()
+                : Node(NodeKind::Program, "Program") {};
+
             ~Program() override = default;
+
+        private:
+            ModuleList m_Modules;
         };
 
         class Module : public Node
         {
-        private:
         public:
-            Module();
+            Module()
+                : Node(NodeKind::Module, "Module") {};
+
             ~Module() override = default;
+
+        private:
+            StatementList m_Statements;
         };
 
     } // namespace ast
