@@ -1,0 +1,9 @@
+func max(a: u32, b: 32) -> u32 {
+    if a > b { a } else { b }
+}
+
+func main() -> u32 {
+    const a: u32 = max(2,3);   // 3
+    const b: u32 = max(2,3);   // 3
+    return a + b;
+}

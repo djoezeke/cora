@@ -1,0 +1,21 @@
+
+module details {
+
+}; // module details
+
+// region Literals
+
+module literals {
+
+    using char_t = u8;
+    using namespace myjson;
+
+    type token_t = enum {
+        none,
+        tag
+    };
+
+    type token = struct;
+
+}; // module literals
+

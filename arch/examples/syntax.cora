@@ -1,0 +1,20 @@
+func max(num: ...) -> u32 {
+    if a > b { a } else { b }
+}
+
+func max(a: u32, b: 32) -> u32 {
+    if a > b { a } else { b }
+}
+
+func max<T: Ord>(a: T, b: T) -> T {
+    if a > b { a } else { b }
+}
+
+comptime func max<T: Ord>(a: T, b: T) -> T {
+    if a > b { a } else { b }
+}
+
+comptime func min_align<T>() -> usize {
+    align_of::<T>()
+}
+const A: usize = min_align::<u64>();   // 8

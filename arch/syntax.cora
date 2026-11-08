@@ -1,0 +1,1026 @@
+// lexer_parser.cpp — C++17
+
+import "std::io::scan";
+
+#include <algorithm>
+#include <cstdint>
+#include <iostream>
+#include <memory>
+#include <sstream>
+#include <string>
+#include <vector>
+
+// ============================================================================
+// Source Management
+// ============================================================================
+pub type SourceLocation = struct
+{
+    offset: u32 = 0,
+    line: u32 = 1,
+    column: u32 = 1
+}
+
+pub type SourceRange = struct
+{
+    begin: SourceLocation;
+    end: SourceLocation;
+}
+
+class SourceManager
+{
+public:
+    SourceManager(std::string filename, std::string source)
+        : filename_(std::move(filename)), source_(std::move(source))
+    {
+        lineStarts_.push_back(0);
+        for (uint32_t i = 0; i < source_.size(); ++i)
+            if (source_[i] == '\n')
+                lineStarts_.push_back(i + 1);
+    }
+
+    const std::string &filename() const { return filename_; }
+    const std::string &source() const { return source_; }
+    uint32_t size() const { return static_cast<uint32_t>(source_.size()); }
+
+    SourceLocation getLocation(uint32_t offset) const
+    {
+        auto it = std::upper_bound(lineStarts_.begin(), lineStarts_.end(), offset);
+        uint32_t lineIdx = (it == lineStarts_.begin())
+                               ? 0
+                               : static_cast<uint32_t>(it - lineStarts_.begin() - 1);
+        SourceLocation loc;
+        loc.offset = offset;
+        loc.line = lineIdx + 1;
+        loc.column = offset - lineStarts_[lineIdx] + 1;
+        return loc;
+    }
+
+    SourceRange getRange(uint32_t begin, uint32_t end) const
+    {
+        return {getLocation(begin), getLocation(end)};
+    }
+
+    std::string getText(const SourceRange &r) const
+    {
+        uint32_t b = std::min(r.begin.offset, size());
+        uint32_t e = std::min(r.end.offset, size());
+        if (e < b)
+            e = b;
+        return source_.substr(b, e - b);
+    }
+
+private:
+    std::string filename_;
+    std::string source_;
+    std::vector<uint32_t> lineStarts_;
+};
+
+// ============================================================================
+// Diagnostics
+// ============================================================================
+pub type DiagnosticSeverity = enum
+{
+    Note,
+    Warning,
+    Error
+};
+
+pub type Diagnostic = struct
+{
+    DiagnosticSeverity severity;
+    SourceLocation location;
+    std::string message;
+};
+
+class DiagnosticEngine
+{
+public:
+    void error(SourceLocation loc, std::string msg)
+    {
+        diagnostics_.push_back({DiagnosticSeverity::Error, loc, std::move(msg)});
+    }
+    void warning(SourceLocation loc, std::string msg)
+    {
+        diagnostics_.push_back({DiagnosticSeverity::Warning, loc, std::move(msg)});
+    }
+    bool hasErrors() const
+    {
+        for (const auto &d : diagnostics_)
+            if (d.severity == DiagnosticSeverity::Error)
+                return true;
+        return false;
+    }
+    const std::vector<Diagnostic> &diagnostics() const { return diagnostics_; }
+
+    void print(const SourceManager &sm, std::ostream &os = std::cerr) const
+    {
+        for (const auto &d : diagnostics_)
+        {
+            os << sm.filename() << ":" << d.location.line << ":" << d.location.column << ": ";
+            switch (d.severity)
+            {
+            case DiagnosticSeverity::Error:
+                os << "error: ";
+                break;
+            case DiagnosticSeverity::Warning:
+                os << "warning: ";
+                break;
+            case DiagnosticSeverity::Note:
+                os << "note: ";
+                break;
+            }
+            os << d.message << "\n";
+
+            const std::string &src = sm.source();
+            uint32_t lineStart = d.location.offset - (d.location.column - 1);
+            uint32_t lineEnd = lineStart;
+            while (lineEnd < src.size() && src[lineEnd] != '\n')
+                ++lineEnd;
+            std::string line = src.substr(lineStart, lineEnd - lineStart);
+
+            os << "    " << line << "\n    ";
+            for (uint32_t i = 1; i < d.location.column; ++i)
+                os << ' ';
+            os << "^\n";
+        }
+    }
+
+private:
+    std::vector<Diagnostic> diagnostics_;
+};
+
+// ============================================================================
+// Tokens
+// ============================================================================
+enum class TokenKind
+{
+    EndOfFile,
+    Invalid,
+    Identifier,
+    Integer,
+    KwLet,
+    KwIf,
+    KwElse,
+    KwWhile,
+    KwReturn,
+    Plus,
+    Minus,
+    Star,
+    Slash,
+    Percent,
+    Assign,
+    EqEq,
+    NotEq,
+    Lt,
+    LtEq,
+    Gt,
+    GtEq,
+    AndAnd,
+    OrOr,
+    Bang,
+    LParen,
+    RParen,
+    LBrace,
+    RBrace,
+    Semi,
+    Comma,
+};
+
+const char *tokenKindName(TokenKind k)
+{
+    switch (k)
+    {
+    case TokenKind::EndOfFile:
+        return "end of file";
+    case TokenKind::Invalid:
+        return "invalid token";
+    case TokenKind::Identifier:
+        return "identifier";
+    case TokenKind::Integer:
+        return "integer";
+    case TokenKind::KwLet:
+        return "'let'";
+    case TokenKind::KwIf:
+        return "'if'";
+    case TokenKind::KwElse:
+        return "'else'";
+    case TokenKind::KwWhile:
+        return "'while'";
+    case TokenKind::KwReturn:
+        return "'return'";
+    case TokenKind::Plus:
+        return "'+'";
+    case TokenKind::Minus:
+        return "'-'";
+    case TokenKind::Star:
+        return "'*'";
+    case TokenKind::Slash:
+        return "'/'";
+    case TokenKind::Percent:
+        return "'%'";
+    case TokenKind::Assign:
+        return "'='";
+    case TokenKind::EqEq:
+        return "'=='";
+    case TokenKind::NotEq:
+        return "'!='";
+    case TokenKind::Lt:
+        return "'<'";
+    case TokenKind::LtEq:
+        return "'<='";
+    case TokenKind::Gt:
+        return "'>'";
+    case TokenKind::GtEq:
+        return "'>='";
+    case TokenKind::AndAnd:
+        return "'&&'";
+    case TokenKind::OrOr:
+        return "'||'";
+    case TokenKind::Bang:
+        return "'!'";
+    case TokenKind::LParen:
+        return "'('";
+    case TokenKind::RParen:
+        return "')'";
+    case TokenKind::LBrace:
+        return "'{'";
+    case TokenKind::RBrace:
+        return "'}'";
+    case TokenKind::Semi:
+        return "';'";
+    case TokenKind::Comma:
+        return "','";
+    }
+    return "?";
+}
+
+struct Token
+{
+    TokenKind kind = TokenKind::EndOfFile;
+    SourceRange range;
+    std::string text;
+    int64_t intValue = 0;
+};
+
+// ============================================================================
+// Lexer — hand-written DFA
+// ============================================================================
+static bool isDigit(char c) { return c >= '0' && c <= '9'; }
+static bool isAlpha(char c) { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_'; }
+static bool isAlphaNum(char c) { return isAlpha(c) || isDigit(c); }
+static bool isSpace(char c) { return c == ' ' || c == '\t' || c == '\r' || c == '\n' || c == '\v' || c == '\f'; }
+
+static TokenKind keywordKind(const std::string &s)
+{
+    if (s == "let")
+        return TokenKind::KwLet;
+    if (s == "if")
+        return TokenKind::KwIf;
+    if (s == "else")
+        return TokenKind::KwElse;
+    if (s == "while")
+        return TokenKind::KwWhile;
+    if (s == "return")
+        return TokenKind::KwReturn;
+    return TokenKind::Identifier;
+}
+
+class Lexer
+{
+public:
+    Lexer(SourceManager &sm, DiagnosticEngine &diag)
+        : sm_(sm), diag_(diag), pos_(0) {}
+
+    // DFA states:
+    //   Start -> (ws|comment)* -> Identifier | Number | Operator
+    //   Identifier: [A-Za-z_][A-Za-z0-9_]*
+    //   Number:     [0-9]+ ( (NumberSuffix: [A-Za-z_][A-Za-z0-9_]*) | ε )
+    //   LineComment:  '//' .* ( '\n' | EOF )
+    //   BlockComment: '/*' .* '*/'   (with BlockCommentStar substate)
+    //   Operator: length-1 or length-2 operator
+    //
+    // Error tolerant: bad input emits a diagnostic and is skipped / marked Invalid.
+    Token next()
+    {
+        // --- Start state loop: skip whitespace + comments ---
+        for (;;)
+        {
+            if (pos_ >= sm_.size())
+                return makeToken(TokenKind::EndOfFile, pos_, pos_);
+            char c = peek();
+
+            if (isSpace(c))
+            {
+                advance();
+                continue;
+            }
+
+            if (c == '/' && peek(1) == '/')
+            { // LineComment state
+                advance();
+                advance();
+                while (pos_ < sm_.size() && peek() != '\n')
+                    advance();
+                continue;
+            }
+            if (c == '/' && peek(1) == '*')
+            { // BlockComment state
+                uint32_t begin = pos_;
+                advance();
+                advance();
+                bool closed = false;
+                while (pos_ < sm_.size())
+                { // BlockCommentStar substate
+                    if (peek() == '*' && peek(1) == '/')
+                    {
+                        advance();
+                        advance();
+                        closed = true;
+                        break;
+                    }
+                    advance();
+                }
+                if (!closed)
+                    diag_.error(sm_.getLocation(begin), "unterminated block comment");
+                continue;
+            }
+            break;
+        }
+
+        uint32_t begin = pos_;
+        char c = peek();
+
+        if (isAlpha(c))
+        { // Identifier state
+            advance();
+            while (pos_ < sm_.size() && isAlphaNum(peek()))
+                advance();
+            std::string text = sm_.source().substr(begin, pos_ - begin);
+            return makeToken(keywordKind(text), begin, pos_);
+        }
+        if (isDigit(c))
+        { // Number state
+            while (pos_ < sm_.size() && isDigit(peek()))
+                advance();
+            if (pos_ < sm_.size() && isAlpha(peek()))
+            { // NumberSuffix state
+                while (pos_ < sm_.size() && isAlphaNum(peek()))
+                    advance();
+                diag_.error(sm_.getLocation(begin), "invalid suffix on integer literal");
+                return makeToken(TokenKind::Invalid, begin, pos_);
+            }
+            Token t = makeToken(TokenKind::Integer, begin, pos_);
+            try
+            {
+                t.intValue = std::stoll(sm_.source().substr(begin, pos_ - begin));
+            }
+            catch (...)
+            {
+                diag_.error(sm_.getLocation(begin), "integer literal out of range");
+            }
+            return t;
+        }
+        return lexOperator(begin); // Operator state
+    }
+
+private:
+    char peek(uint32_t la = 0) const
+    {
+        uint32_t p = pos_ + la;
+        return p < sm_.size() ? sm_.source()[p] : '\0';
+    }
+    char advance() { return sm_.source()[pos_++]; }
+
+    Token makeToken(TokenKind kind, uint32_t begin, uint32_t end)
+    {
+        Token t;
+        t.kind = kind;
+        t.range = sm_.getRange(begin, end);
+        t.text = sm_.getText(t.range);
+        return t;
+    }
+
+    Token lexOperator(uint32_t begin)
+    {
+        char c = advance();
+        switch (c)
+        {
+        case '+':
+            return makeToken(TokenKind::Plus, begin, pos_);
+        case '-':
+            return makeToken(TokenKind::Minus, begin, pos_);
+        case '*':
+            return makeToken(TokenKind::Star, begin, pos_);
+        case '/':
+            return makeToken(TokenKind::Slash, begin, pos_);
+        case '%':
+            return makeToken(TokenKind::Percent, begin, pos_);
+        case '(':
+            return makeToken(TokenKind::LParen, begin, pos_);
+        case ')':
+            return makeToken(TokenKind::RParen, begin, pos_);
+        case '{':
+            return makeToken(TokenKind::LBrace, begin, pos_);
+        case '}':
+            return makeToken(TokenKind::RBrace, begin, pos_);
+        case ';':
+            return makeToken(TokenKind::Semi, begin, pos_);
+        case ',':
+            return makeToken(TokenKind::Comma, begin, pos_);
+        case '=':
+            if (peek() == '=')
+            {
+                advance();
+                return makeToken(TokenKind::EqEq, begin, pos_);
+            }
+            return makeToken(TokenKind::Assign, begin, pos_);
+        case '!':
+            if (peek() == '=')
+            {
+                advance();
+                return makeToken(TokenKind::NotEq, begin, pos_);
+            }
+            return makeToken(TokenKind::Bang, begin, pos_);
+        case '<':
+            if (peek() == '=')
+            {
+                advance();
+                return makeToken(TokenKind::LtEq, begin, pos_);
+            }
+            return makeToken(TokenKind::Lt, begin, pos_);
+        case '>':
+            if (peek() == '=')
+            {
+                advance();
+                return makeToken(TokenKind::GtEq, begin, pos_);
+            }
+            return makeToken(TokenKind::Gt, begin, pos_);
+        case '&':
+            if (peek() == '&')
+            {
+                advance();
+                return makeToken(TokenKind::AndAnd, begin, pos_);
+            }
+            diag_.error(sm_.getLocation(begin), "unexpected character '&'; did you mean '&&'?");
+            return makeToken(TokenKind::Invalid, begin, pos_);
+        case '|':
+            if (peek() == '|')
+            {
+                advance();
+                return makeToken(TokenKind::OrOr, begin, pos_);
+            }
+            diag_.error(sm_.getLocation(begin), "unexpected character '|'; did you mean '||'?");
+            return makeToken(TokenKind::Invalid, begin, pos_);
+        default:
+        {
+            std::ostringstream ss;
+            ss << "unexpected character '" << c << "'";
+            diag_.error(sm_.getLocation(begin), ss.str());
+            return makeToken(TokenKind::Invalid, begin, pos_);
+        }
+        }
+    }
+
+    SourceManager &sm_;
+    DiagnosticEngine &diag_;
+    uint32_t pos_;
+};
+
+// ============================================================================
+// AST
+// ============================================================================
+static void printIndent(std::ostream &os, int n)
+{
+    for (int i = 0; i < n; ++i)
+        os << "  ";
+}
+
+struct Expr
+{
+    SourceRange range;
+    virtual ~Expr() = default;
+    virtual void dump(std::ostream &os, int n) const = 0;
+};
+
+struct IntLitExpr : Expr
+{
+    int64_t value = 0;
+    void dump(std::ostream &os, int n) const override
+    {
+        printIndent(os, n);
+        os << "IntLit(" << value << ")\n";
+    }
+};
+struct IdentExpr : Expr
+{
+    std::string name;
+    void dump(std::ostream &os, int n) const override
+    {
+        printIndent(os, n);
+        os << "Ident(" << name << ")\n";
+    }
+};
+struct UnaryExpr : Expr
+{
+    TokenKind op = TokenKind::Invalid;
+    std::unique_ptr<Expr> operand;
+    void dump(std::ostream &os, int n) const override
+    {
+        printIndent(os, n);
+        os << "Unary(" << tokenKindName(op) << ")\n";
+        if (operand)
+            operand->dump(os, n + 1);
+    }
+};
+struct BinaryExpr : Expr
+{
+    TokenKind op = TokenKind::Invalid;
+    std::unique_ptr<Expr> lhs, rhs;
+    void dump(std::ostream &os, int n) const override
+    {
+        printIndent(os, n);
+        os << "Binary(" << tokenKindName(op) << ")\n";
+        if (lhs)
+            lhs->dump(os, n + 1);
+        if (rhs)
+            rhs->dump(os, n + 1);
+    }
+};
+struct ErrorExpr : Expr
+{
+    void dump(std::ostream &os, int n) const override
+    {
+        printIndent(os, n);
+        os << "Error\n";
+    }
+};
+
+struct Stmt
+{
+    SourceRange range;
+    virtual ~Stmt() = default;
+    virtual void dump(std::ostream &os, int n) const = 0;
+};
+struct BlockStmt : Stmt
+{
+    std::vector<std::unique_ptr<Stmt>> stmts;
+    void dump(std::ostream &os, int n) const override
+    {
+        printIndent(os, n);
+        os << "Block\n";
+        for (auto &s : stmts)
+            s->dump(os, n + 1);
+    }
+};
+struct LetStmt : Stmt
+{
+    std::string name;
+    std::unique_ptr<Expr> init;
+    void dump(std::ostream &os, int n) const override
+    {
+        printIndent(os, n);
+        os << "Let(" << name << ")\n";
+        if (init)
+            init->dump(os, n + 1);
+    }
+};
+
+struct IfStmt : Stmt
+{
+    std::unique_ptr<Expr> cond;
+    std::unique_ptr<Stmt> thenBranch, elseBranch;
+    void dump(std::ostream &os, int n) const override
+    {
+        printIndent(os, n);
+        os << "If\n";
+        printIndent(os, n + 1);
+        os << "cond:\n";
+        if (cond)
+            cond->dump(os, n + 2);
+        printIndent(os, n + 1);
+        os << "then:\n";
+        if (thenBranch)
+            thenBranch->dump(os, n + 2);
+        if (elseBranch)
+        {
+            printIndent(os, n + 1);
+            os << "else:\n";
+            elseBranch->dump(os, n + 2);
+        }
+    }
+};
+
+struct WhileStmt : Stmt
+{
+    std::unique_ptr<Expr> cond;
+    std::unique_ptr<Stmt> body;
+    void dump(std::ostream &os, int n) const override
+    {
+        printIndent(os, n);
+        os << "While\n";
+        printIndent(os, n + 1);
+        os << "cond:\n";
+        if (cond)
+            cond->dump(os, n + 2);
+        printIndent(os, n + 1);
+        os << "body:\n";
+        if (body)
+            body->dump(os, n + 2);
+    }
+};
+struct ReturnStmt : Stmt
+{
+    std::unique_ptr<Expr> value;
+    void dump(std::ostream &os, int n) const override
+    {
+        printIndent(os, n);
+        os << "Return\n";
+        if (value)
+            value->dump(os, n + 1);
+    }
+};
+
+struct ExprStmt : Stmt
+{
+    std::unique_ptr<Expr> expr;
+    void dump(std::ostream &os, int n) const override
+    {
+        printIndent(os, n);
+        os << "ExprStmt\n";
+        if (expr)
+            expr->dump(os, n + 1);
+    }
+};
+
+// ============================================================================
+// Parser — recursive descent + Pratt
+// ============================================================================
+class Parser
+{
+public:
+    Parser(SourceManager &sm, DiagnosticEngine &diag)
+        : sm_(sm), diag_(diag), lexer_(sm, diag)
+    {
+        current_ = lexer_.next();
+    }
+
+    std::unique_ptr<Stmt> parseProgram()
+    {
+        auto block = std::make_unique<BlockStmt>();
+        block->range.begin = current_.range.begin;
+        while (!check(TokenKind::EndOfFile))
+        {
+            auto s = parseStatement();
+            if (s)
+                block->stmts.push_back(std::move(s));
+        }
+        block->range.end = current_.range.end;
+        return block;
+    }
+
+private:
+    // ---- Token helpers ----
+    const Token &peek() const { return current_; }
+    Token advance()
+    {
+        Token prev = current_;
+        current_ = lexer_.next();
+        return prev;
+    }
+    bool check(TokenKind k) const { return current_.kind == k; }
+    bool match(TokenKind k)
+    {
+        if (check(k))
+        {
+            advance();
+            return true;
+        }
+        return false;
+    }
+
+    Token expect(TokenKind k, const char *what)
+    {
+        if (check(k))
+            return advance();
+        std::ostringstream ss;
+        ss << "expected " << what << ", got " << tokenKindName(current_.kind);
+        diag_.error(current_.range.begin, ss.str());
+        Token dummy;
+        dummy.kind = k;
+        dummy.range = current_.range;
+        return dummy;
+    }
+
+    // ---- Recursive-descent statement parser ----
+    std::unique_ptr<Stmt> parseStatement()
+    {
+        switch (current_.kind)
+        {
+        case TokenKind::LBrace:
+            return parseBlock();
+        case TokenKind::KwIf:
+            return parseIf();
+        case TokenKind::KwWhile:
+            return parseWhile();
+        case TokenKind::KwLet:
+            return parseLet();
+        case TokenKind::KwReturn:
+            return parseReturn();
+        case TokenKind::Semi:
+        { // empty statement
+            auto s = std::make_unique<ExprStmt>();
+            s->range = current_.range;
+            advance();
+            return s;
+        }
+        default:
+            return parseExprStmt();
+        }
+    }
+
+    std::unique_ptr<Stmt> parseBlock()
+    {
+        auto block = std::make_unique<BlockStmt>();
+        block->range.begin = current_.range.begin;
+        if (check(TokenKind::LBrace))
+            advance();
+        else
+            diag_.error(current_.range.begin, "expected '{' to start block");
+
+        while (!check(TokenKind::RBrace) && !check(TokenKind::EndOfFile))
+        {
+            auto s = parseStatement();
+            if (s)
+                block->stmts.push_back(std::move(s));
+        }
+        if (check(TokenKind::RBrace))
+        {
+            block->range.end = current_.range.end;
+            advance();
+        }
+        else
+        {
+            diag_.error(current_.range.begin, "unterminated block; expected '}'");
+            block->range.end = current_.range.end;
+        }
+        return block;
+    }
+
+    std::unique_ptr<Stmt> parseIf()
+    {
+        auto s = std::make_unique<IfStmt>();
+        s->range.begin = current_.range.begin;
+        advance(); // 'if'
+        s->cond = parseExpression(0);
+        s->thenBranch = parseStatement();
+        if (match(TokenKind::KwElse))
+            s->elseBranch = parseStatement();
+        s->range.end = s->elseBranch   ? s->elseBranch->range.end
+                       : s->thenBranch ? s->thenBranch->range.end
+                                       : current_.range.begin;
+        return s;
+    }
+
+    std::unique_ptr<Stmt> parseWhile()
+    {
+        auto s = std::make_unique<WhileStmt>();
+        s->range.begin = current_.range.begin;
+        advance(); // 'while'
+        s->cond = parseExpression(0);
+        s->body = parseStatement();
+        s->range.end = s->body ? s->body->range.end : current_.range.begin;
+        return s;
+    }
+
+    std::unique_ptr<Stmt> parseLet()
+    {
+        auto s = std::make_unique<LetStmt>();
+        s->range.begin = current_.range.begin;
+        advance(); // 'let'
+        if (check(TokenKind::Identifier))
+        {
+            s->name = current_.text;
+            advance();
+        }
+        else
+            diag_.error(current_.range.begin, "expected identifier after 'let'");
+
+        if (match(TokenKind::Assign))
+            s->init = parseExpression(0);
+        else
+            diag_.error(current_.range.begin, "expected '=' in let binding");
+
+        if (check(TokenKind::Semi))
+        {
+            s->range.end = current_.range.end;
+            advance();
+        }
+        else
+        {
+            diag_.error(current_.range.begin, "expected ';' after let binding");
+            s->range.end = current_.range.begin;
+        }
+        return s;
+    }
+
+    std::unique_ptr<Stmt> parseReturn()
+    {
+        auto s = std::make_unique<ReturnStmt>();
+        s->range.begin = current_.range.begin;
+        advance(); // 'return'
+        if (!check(TokenKind::Semi) && !check(TokenKind::RBrace) && !check(TokenKind::EndOfFile))
+            s->value = parseExpression(0);
+
+        if (check(TokenKind::Semi))
+        {
+            s->range.end = current_.range.end;
+            advance();
+        }
+        else
+        {
+            diag_.error(current_.range.begin, "expected ';' after return");
+            s->range.end = current_.range.begin;
+        }
+        return s;
+    }
+
+    std::unique_ptr<Stmt> parseExprStmt()
+    {
+        auto s = std::make_unique<ExprStmt>();
+        s->range.begin = current_.range.begin;
+        s->expr = parseExpression(0);
+        s->range.end = current_.range.begin;
+        if (check(TokenKind::Semi))
+        {
+            s->range.end = current_.range.end;
+            advance();
+        }
+        else
+            diag_.error(current_.range.begin, "expected ';' after expression");
+        return s;
+    }
+
+    // ---- Pratt expression parser ----
+    int bindingPower(TokenKind k) const
+    {
+        switch (k)
+        {
+        case TokenKind::Assign:
+            return 1; // right-assoc
+        case TokenKind::OrOr:
+            return 2;
+        case TokenKind::AndAnd:
+            return 3;
+        case TokenKind::EqEq:
+        case TokenKind::NotEq:
+            return 4;
+        case TokenKind::Lt:
+        case TokenKind::LtEq:
+        case TokenKind::Gt:
+        case TokenKind::GtEq:
+            return 5;
+        case TokenKind::Plus:
+        case TokenKind::Minus:
+            return 6;
+        case TokenKind::Star:
+        case TokenKind::Slash:
+        case TokenKind::Percent:
+            return 7;
+        default:
+            return 0;
+        }
+    }
+
+    std::unique_ptr<Expr> parseExpression(int minBp)
+    {
+        auto lhs = parsePrimary();
+        for (;;)
+        {
+            int bp = bindingPower(current_.kind);
+            if (bp <= minBp)
+                break;
+
+            Token op = advance();
+            bool rightAssoc = (op.kind == TokenKind::Assign);
+            int nextMinBp = rightAssoc ? bp - 1 : bp;
+            auto rhs = parseExpression(nextMinBp);
+
+            if (op.kind == TokenKind::Assign &&
+                dynamic_cast<IdentExpr *>(lhs.get()) == nullptr)
+            {
+                diag_.error(op.range.begin,
+                            "left-hand side of assignment must be an identifier");
+            }
+
+            auto bin = std::make_unique<BinaryExpr>();
+            bin->op = op.kind;
+            bin->range.begin = lhs->range.begin;
+            bin->range.end = rhs->range.end;
+            bin->lhs = std::move(lhs);
+            bin->rhs = std::move(rhs);
+            lhs = std::move(bin);
+        }
+        return lhs;
+    }
+
+    std::unique_ptr<Expr> parsePrimary()
+    {
+        Token tok = current_;
+        switch (tok.kind)
+        {
+        case TokenKind::Integer:
+        {
+            auto e = std::make_unique<IntLitExpr>();
+            e->range = tok.range;
+            e->value = tok.intValue;
+            advance();
+            return e;
+        }
+        case TokenKind::Identifier:
+        {
+            auto e = std::make_unique<IdentExpr>();
+            e->range = tok.range;
+            e->name = tok.text;
+            advance();
+            return e;
+        }
+        case TokenKind::LParen:
+        {
+            advance(); // '('
+            auto e = parseExpression(0);
+            if (check(TokenKind::RParen))
+            {
+                Token close = advance();
+                e->range.end = close.range.end;
+            }
+            else
+            {
+                diag_.error(current_.range.begin, "expected ')'");
+            }
+            e->range.begin = tok.range.begin;
+            return e;
+        }
+        case TokenKind::Minus:
+        case TokenKind::Bang:
+        {
+            advance();
+            auto operand = parseExpression(8); // higher than any binary
+            auto e = std::make_unique<UnaryExpr>();
+            e->op = tok.kind;
+            e->range.begin = tok.range.begin;
+            e->range.end = operand->range.end;
+            e->operand = std::move(operand);
+            return e;
+        }
+        default:
+        {
+            std::ostringstream ss;
+            ss << "expected expression, got " << tokenKindName(tok.kind);
+            diag_.error(tok.range.begin, ss.str());
+            auto e = std::make_unique<ErrorExpr>();
+            e->range = tok.range;
+            if (!check(TokenKind::EndOfFile))
+                advance(); // guarantee progress
+            return e;
+        }
+        }
+    }
+
+    SourceManager &sm_;
+    DiagnosticEngine &diag_;
+    Lexer lexer_;
+    Token current_;
+};
+
+// ============================================================================
+// Demo
+// ============================================================================
+pub func main() -> void {
+
+std::string source = R"(let x = 10;
+let y = @20;
+if (x < y) {
+    x = x + 1;
+} else {
+    y = y - 1;
+}
+while (x < 100) {
+    x = x * 2
+}
+return x + y * 2 - 1;
+)";
+
+    SourceManager sm("demo.lang", source);
+    DiagnosticEngine diag;
+    Parser parser(sm, diag);
+    auto ast = parser.parseProgram();
+
+    std::cout << "=== Diagnostics ===\n";
+    diag.print(sm, std::cout);
+
+    std::cout << "\n=== AST ===\n";
+    if (ast)
+        ast->dump(std::cout, 0);
+
+    return diag.hasErrors() ? 1 : 0;
+}
