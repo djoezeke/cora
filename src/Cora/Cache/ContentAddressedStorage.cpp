@@ -1,4 +1,5 @@
 #include <Cora/Cache/ContentAddressedStorage.h>
+#include <Cora/Core/SHA256.h>
 
 #include <atomic>
 #include <cctype>
@@ -25,7 +26,14 @@ namespace cora::cache
 
     std::string ContentAddressedStorage::namespaceName(CacheNamespace name)
     {
-        return name == CacheNamespace::CIR ? "h" : "o";
+        switch (name)
+        {
+        case CacheNamespace::Manifest: return "h";
+        case CacheNamespace::Object: return "o";
+        case CacheNamespace::CIR: return "c";
+        case CacheNamespace::Temporary: return "t";
+        }
+        return "t";
     }
 
     std::string ContentAddressedStorage::safeLabel(std::string_view label)
@@ -44,6 +52,12 @@ namespace cora::cache
     {
         return root_ / namespaceName(name) / key.hex() /
                (safeLabel(label) + std::string(extension));
+    }
+
+    std::filesystem::path ContentAddressedStorage::manifestPath(
+        const cora::core::Digest &key, std::string_view label) const
+    {
+        return pathFor(CacheNamespace::Manifest, key, label, ".manifest");
     }
 
     CacheLookup ContentAddressedStorage::lookup(CacheNamespace name,
@@ -67,6 +81,30 @@ namespace cora::cache
                                 ? "cache lookup error: " + error.message()
                                 : "cache miss";
             return result;
+        }
+        if (name != CacheNamespace::Manifest)
+        {
+            const auto manifest = manifestPath(key, label);
+            if (!std::filesystem::is_regular_file(manifest, error))
+            {
+                result.reason = "cache miss: missing manifest";
+                return result;
+            }
+            const auto bytes = read(result.path, &result.reason);
+            if (!bytes)
+                return result;
+            result.contentDigest = cora::crypto::SHA256::hash(
+                std::string_view(reinterpret_cast<const char *>(bytes->data()), bytes->size()));
+            const auto manifestBytes = read(manifest, &result.reason);
+            if (!manifestBytes)
+                return result;
+            const std::string manifestText(manifestBytes->begin(), manifestBytes->end());
+            const std::string expected = "content=" + result.contentDigest.hex();
+            if (manifestText.find(expected) == std::string::npos)
+            {
+                result.reason = "cache miss: manifest content hash mismatch";
+                return result;
+            }
         }
         result.hit = true;
         result.reason = "cache hit";
@@ -109,7 +147,7 @@ namespace cora::cache
     {
         const auto now = std::chrono::steady_clock::now().time_since_epoch().count();
         const auto id = nextTemporaryId.fetch_add(1, std::memory_order_relaxed);
-        return root_ / "tmp" / ("artifact-" + std::to_string(now) + "-" + std::to_string(id) + ".partial");
+        return root_ / "t" / ("artifact-" + std::to_string(now) + "-" + std::to_string(id) + ".partial");
     }
 
     CacheWrite ContentAddressedStorage::publishFile(const std::filesystem::path &destination,
@@ -202,7 +240,23 @@ namespace cora::cache
             }
         }
 
-        return publishFile(result.path, temporary);
+        result = publishFile(result.path, temporary);
+        if (result.published && name != CacheNamespace::Manifest)
+        {
+            const auto digest = cora::crypto::SHA256::hash(
+                std::string_view(reinterpret_cast<const char *>(bytes.data()), bytes.size()));
+            const std::string manifest = "key=" + key.hex() + "\ncontent=" + digest.hex() +
+                                         "\nlabel=" + safeLabel(label) + "\n";
+            const std::vector<std::uint8_t> manifestBytes(manifest.begin(), manifest.end());
+            const auto manifestWrite = put(CacheNamespace::Manifest, key, label,
+                                           ".manifest", manifestBytes);
+            if (!manifestWrite.published)
+            {
+                result.published = false;
+                result.error = "unable to publish cache manifest: " + manifestWrite.error;
+            }
+        }
+        return result;
     }
 
     CacheWrite ContentAddressedStorage::putFile(CacheNamespace name,
@@ -246,7 +300,31 @@ namespace cora::cache
         }
         output.close();
         input.close();
-        return publishFile(result.path, temporary);
+        result = publishFile(result.path, temporary);
+        if (result.published && name != CacheNamespace::Manifest)
+        {
+            std::string error;
+            const auto bytes = read(result.path, &error);
+            if (!bytes)
+            {
+                result.published = false;
+                result.error = error;
+                return result;
+            }
+            const auto digest = cora::crypto::SHA256::hash(
+                std::string_view(reinterpret_cast<const char *>(bytes->data()), bytes->size()));
+            const std::string manifest = "key=" + key.hex() + "\ncontent=" + digest.hex() +
+                                         "\nlabel=" + safeLabel(label) + "\n";
+            const std::vector<std::uint8_t> manifestBytes(manifest.begin(), manifest.end());
+            const auto manifestWrite = put(CacheNamespace::Manifest, key, label,
+                                           ".manifest", manifestBytes);
+            if (!manifestWrite.published)
+            {
+                result.published = false;
+                result.error = "unable to publish cache manifest: " + manifestWrite.error;
+            }
+        }
+        return result;
     }
 
     std::vector<std::filesystem::path> ContentAddressedStorage::list(CacheNamespace name) const

@@ -30,6 +30,7 @@ namespace cora::driver
         struct ParsedArguments
         {
             BuildConfig config;
+            bool manifestInput = false;
             bool help = false;
             bool version = false;
             bool valid = true;
@@ -61,6 +62,9 @@ namespace cora::driver
             const auto result = std::from_chars(text.data(), text.data() + text.size(), value);
             return result.ec == std::errc{} && result.ptr == text.data() + text.size();
         }
+
+        std::string trim(std::string value);
+        std::string tomlValue(std::string value);
 
         std::string requireValue(int &index, int argc, const char *const *argv,
                                  std::string_view option, ParsedArguments &parsed)
@@ -96,16 +100,116 @@ namespace cora::driver
                                                ? value.size() - begin
                                                : end - begin;
                 if (length != 0)
-                    target.features.emplace_back(value.substr(begin, length));
+                {
+                    std::string feature(value.substr(begin, length));
+                    feature = trim(std::move(feature));
+                    if (!feature.empty() && feature.front() == '[')
+                        feature.erase(feature.begin());
+                    if (!feature.empty() && feature.back() == ']')
+                        feature.pop_back();
+                    feature = tomlValue(std::move(feature));
+                    if (!feature.empty())
+                        target.features.push_back(std::move(feature));
+                }
                 if (end == std::string_view::npos)
                     break;
                 begin = end + 1;
             }
         }
 
+        std::string trim(std::string value)
+        {
+            const auto first = value.find_first_not_of(" \t\r\n");
+            if (first == std::string::npos)
+                return {};
+            const auto last = value.find_last_not_of(" \t\r\n");
+            return value.substr(first, last - first + 1);
+        }
+
+        std::string tomlValue(std::string value)
+        {
+            value = trim(std::move(value));
+            if (value.size() >= 2 &&
+                ((value.front() == '"' && value.back() == '"') ||
+                 (value.front() == '\'' && value.back() == '\'')))
+                return value.substr(1, value.size() - 2);
+            return value;
+        }
+
+        bool applyManifest(BuildConfig &config, ParsedArguments &parsed)
+        {
+            const auto root = std::filesystem::current_path();
+            const auto manifest = root / "cora.toml";
+            std::ifstream input(manifest);
+            if (!input)
+                return true;
+
+            config.projectRoot = root;
+            config.manifestPath = manifest;
+            std::string section;
+            std::string line;
+            while (std::getline(input, line))
+            {
+                const auto comment = line.find('#');
+                if (comment != std::string::npos)
+                    line.erase(comment);
+                line = trim(std::move(line));
+                if (line.empty())
+                    continue;
+                if (line.front() == '[' && line.back() == ']')
+                {
+                    section = trim(line.substr(1, line.size() - 2));
+                    continue;
+                }
+                const auto equals = line.find('=');
+                if (equals == std::string::npos)
+                    continue;
+                const std::string key = section.empty()
+                                            ? trim(line.substr(0, equals))
+                                            : section + "." + trim(line.substr(0, equals));
+                const std::string value = tomlValue(line.substr(equals + 1));
+                if (key == "package.source" || key == "build.source" || key == "source" ||
+                    key == "build.input")
+                {
+                    config.input = config.projectRoot / value;
+                    parsed.manifestInput = true;
+                }
+                else if (key == "build.output") config.output = config.projectRoot / value;
+                else if (key == "build.cache-dir") config.cacheRoot = config.projectRoot / value;
+                else if (key == "build.profile" || key == "profile") config.profile = value;
+                else if (key == "build.target" || key == "target" ||
+                         key == "target.triple") config.target.triple = value;
+                else if (key == "build.emit" || key == "emit") setEmit(config, value);
+                else if (key == "build.cpu" || key == "target.cpu") config.target.cpu = value;
+                else if (key == "build.features" || key == "target.features")
+                    setFeatures(config.target, value.substr(
+                        value.find('[') == std::string::npos ? 0 : 1));
+                else if (key == "build.opt-level" || key == "profile.opt-level")
+                    parseInteger(value, config.optimizationLevel);
+                else if (key == "build.jobs") parseSize(value, config.jobs);
+                else if (key == "build.frontend-options") config.frontendOptions = value;
+                else if (key == "build.debug") config.debugFlags = value;
+                else if (key == "build.sanitize") config.sanitizerFlags = value;
+                else if (key == "build.lto") config.ltoFlags = value;
+                else if (key == "build.no-cache" && value == "true")
+                    config.cachePolicy = cora::cache::CachePolicy::Disabled;
+            }
+            if (config.input.empty())
+            {
+                const auto defaultSource = config.projectRoot / "src" / "main.cora";
+                if (std::filesystem::exists(defaultSource))
+                {
+                    config.input = defaultSource;
+                    parsed.manifestInput = true;
+                }
+            }
+            return true;
+        }
+
         ParsedArguments parseArguments(int argc, const char *const *argv)
         {
             ParsedArguments parsed;
+            applyManifest(parsed.config, parsed);
             int index = 1;
             if (index < argc && argv[index][0] != '-')
             {
@@ -203,12 +307,16 @@ namespace cora::driver
                 else if (argument == "--source" || startsWith(argument, "--source=")) parsed.config.input = optionValue("--source");
                 else if (!argument.empty() && argument[0] != '-')
                 {
-                    if (!parsed.config.input.empty())
+                    if (!parsed.config.input.empty() && !parsed.manifestInput)
                     {
                         parsed.valid = false;
                         parsed.error = "only one source input is supported";
                     }
-                    else parsed.config.input = argument;
+                    else
+                    {
+                        parsed.config.input = argument;
+                        parsed.manifestInput = false;
+                    }
                 }
                 else
                 {
@@ -351,7 +459,15 @@ namespace cora::driver
             out << "CIR key=" << artifact.key.hex() << " source=" << artifact.input.sourceFileId
                 << " tokens=" << artifact.module.tokenCount << " lines=" << artifact.module.lineCount
                 << " functions=" << artifact.module.functionCount << " interface="
-                << artifact.publicInterfaceDigest.hex() << '\n';
+                << artifact.publicInterfaceDigest.hex()
+                << " instructions=" << artifact.module.instructions.size() << '\n';
+            for (const auto &instruction : artifact.module.instructions)
+            {
+                out << "  " << instruction.opcode;
+                for (const auto &operand : instruction.operands)
+                    out << ' ' << operand;
+                out << '\n';
+            }
         }
 
         void dumpAIR(std::ostream &out, const cora::air::AIRModule &module)

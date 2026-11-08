@@ -4,6 +4,45 @@ namespace cora::ast
 {
     namespace
     {
+        std::uint32_t storeExpr(ASTStorage &storage, const Expr &expr)
+        {
+            const auto index = static_cast<std::uint32_t>(storage.expressionKinds.size());
+            storage.expressionKinds.push_back(expr.kind);
+            storage.expressionNames.push_back(expr.name);
+            storage.expressionOperators.push_back(expr.op);
+            storage.expressionIntegerValues.push_back(expr.integerValue);
+            storage.expressionOperands.push_back(
+                static_cast<std::uint32_t>(expr.operands.size()));
+            for (const auto &operand : expr.operands)
+                storeExpr(storage, *operand);
+            return index;
+        }
+
+        std::uint32_t storeStatement(ASTStorage &storage, const Statement &statement)
+        {
+            const auto index = static_cast<std::uint32_t>(storage.statementKinds.size());
+            storage.statementKinds.push_back(statement.kind);
+            storage.statementNames.push_back(statement.name);
+            storage.statementExpressions.push_back(statement.expression
+                                                        ? storeExpr(storage, *statement.expression)
+                                                        : UINT32_MAX);
+            storage.statementChildren.push_back(
+                static_cast<std::uint32_t>(statement.statements.size()));
+            for (const auto &child : statement.statements)
+                storeStatement(storage, *child);
+            if (statement.thenBranch)
+                storeStatement(storage, *statement.thenBranch);
+            if (statement.elseBranch)
+                storeStatement(storage, *statement.elseBranch);
+            if (statement.body)
+                storeStatement(storage, *statement.body);
+            if (statement.condition)
+                storeExpr(storage, *statement.condition);
+            if (statement.tail)
+                storeExpr(storage, *statement.tail);
+            return index;
+        }
+
         void indent(std::ostream &out, unsigned depth)
         {
             for (unsigned i = 0; i < depth; ++i)
@@ -26,6 +65,8 @@ namespace cora::ast
             case Expr::Kind::Unary: out << "Unary(" << expr.op << ")"; break;
             case Expr::Kind::Binary: out << "Binary(" << expr.op << ")"; break;
             case Expr::Kind::Call: out << "Call(" << expr.name << ")"; break;
+            case Expr::Kind::FieldAccess: out << "Field(" << expr.name << ")"; break;
+            case Expr::Kind::StructLiteral: out << "Struct(" << expr.name << ")"; break;
             case Expr::Kind::Error: out << "Error"; break;
             }
             out << '\n';
@@ -88,6 +129,18 @@ namespace cora::ast
             }
         }
     } // namespace
+
+    void AST::buildStorage()
+    {
+        storage = {};
+        for (const auto &function : module.functions)
+        {
+            storage.functionNames.push_back(function->name);
+            storage.functionReturnTypes.push_back(function->returnType);
+            storage.functionBodyStatements.push_back(
+                function->body ? storeStatement(storage, *function->body) : UINT32_MAX);
+        }
+    }
 
     void AST::dump(std::ostream &out) const
     {

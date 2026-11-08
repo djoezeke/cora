@@ -31,6 +31,26 @@ namespace cora
 
                 while (!check(Token::Type::_EOF))
                 {
+                    if (match(Token::Type::TYPE))
+                    {
+                        const Token name = expect(Token::Type::IDENTIFIER, "type name");
+                        expect(Token::Type::EQUALS, "'='");
+                        expect(Token::Type::STRUCT, "'struct'");
+                        expect(Token::Type::LBRACE, "'{'");
+                        cora::ast::TypeDecl type;
+                        type.name = name.text;
+                        while (!check(Token::Type::RBRACE) && !check(Token::Type::_EOF))
+                        {
+                            const Token field = expect(Token::Type::IDENTIFIER, "field name");
+                            expect(Token::Type::COLON, "':'");
+                            type.fields.push_back({field.text, parseType()});
+                            match(Token::Type::COMMA);
+                        }
+                        expect(Token::Type::RBRACE, "'}'");
+                        match(Token::Type::SEMICOLON);
+                        result.ast->module.types.push_back(std::move(type));
+                        continue;
+                    }
                     if (!check(Token::Type::FUNC) && !check(Token::Type::PUB))
                     {
                         error(current(), "expected 'func' at module scope");
@@ -41,6 +61,7 @@ namespace cora
                     if (function)
                         result.ast->module.functions.push_back(std::move(function));
                 }
+                result.ast->buildStorage();
                 return result;
             }
 
@@ -60,6 +81,13 @@ namespace cora
             }
 
             bool check(Token::Type type) const { return current().type == type; }
+
+            bool lookaheadIs(std::size_t distance, Token::Type type) const
+            {
+                const std::size_t position = index_ + distance;
+                return position < tokensView_->tokens.size() &&
+                       tokensView_->tokens[position].type == type;
+            }
 
             bool match(Token::Type type)
             {
@@ -345,8 +373,49 @@ namespace cora
             std::unique_ptr<Expr> parsePostfix()
             {
                 auto expression = parsePrimary();
-                while (match(Token::Type::LPAREN))
+                while (true)
                 {
+                    if (match(Token::Type::DOT))
+                    {
+                        const Token field = expect(Token::Type::IDENTIFIER, "field name");
+                        auto access = std::make_unique<Expr>();
+                        access->kind = Expr::Kind::FieldAccess;
+                        access->name = field.text;
+                        access->range = {expression->range.begin, field.range.end};
+                        access->operands.push_back(std::move(expression));
+                        expression = std::move(access);
+                        continue;
+                    }
+                    if (expression->kind == Expr::Kind::Name &&
+                        check(Token::Type::LBRACE) &&
+                        lookaheadIs(1, Token::Type::IDENTIFIER) &&
+                        lookaheadIs(2, Token::Type::COLON))
+                    {
+                        consume();
+                        auto literal = std::make_unique<Expr>();
+                        literal->kind = Expr::Kind::StructLiteral;
+                        literal->name = expression->name;
+                        literal->range.begin = expression->range.begin;
+                        while (!check(Token::Type::RBRACE) && !check(Token::Type::_EOF))
+                        {
+                            const Token field = expect(Token::Type::IDENTIFIER, "field name");
+                            expect(Token::Type::COLON, "':'");
+                            auto value = parseExpression(0);
+                            auto fieldExpr = std::make_unique<Expr>();
+                            fieldExpr->kind = Expr::Kind::FieldAccess;
+                            fieldExpr->name = field.text;
+                            fieldExpr->operands.push_back(std::move(value));
+                            literal->operands.push_back(std::move(fieldExpr));
+                            if (!match(Token::Type::COMMA))
+                                break;
+                        }
+                        const Token close = expect(Token::Type::RBRACE, "'}'");
+                        literal->range.end = close.range.end;
+                        expression = std::move(literal);
+                        continue;
+                    }
+                    if (!match(Token::Type::LPAREN))
+                        break;
                     auto call = std::make_unique<Expr>();
                     call->kind = Expr::Kind::Call;
                     call->range.begin = expression->range.begin;

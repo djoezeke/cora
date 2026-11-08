@@ -12,7 +12,7 @@
 
 namespace cora::cache
 {
-    enum class CacheNamespace { CIR, Object };
+    enum class CacheNamespace { Manifest, Object, CIR, Temporary };
     enum class CachePolicy { Enabled, ReadOnly, Disabled };
     struct CacheLookup
     {
@@ -20,6 +20,7 @@ namespace cora::cache
         cora::core::Digest key;
         std::filesystem::path path;
         std::string reason;
+        cora::core::Digest contentDigest;
     };
     struct CacheWrite
     {
@@ -40,6 +41,8 @@ namespace cora::cache
                                                      const cora::core::Digest &key,
                                                      std::string_view label,
                                                      std::string_view extension) const;
+        [[nodiscard]] std::filesystem::path manifestPath(
+            const cora::core::Digest &key, std::string_view label) const;
         [[nodiscard]] CacheLookup lookup(CacheNamespace name,
                                          const cora::core::Digest &key,
                                          std::string_view label,

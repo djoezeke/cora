@@ -1,9 +1,14 @@
-func max(a: u32, b: 32) -> u32 {
+type Point = struct {
+    x: u32,
+    y: u32,
+}
+
+func max(a: u32, b: u32) -> u32 {
     if a > b { a } else { b }
 }
 
 func main() -> u32 {
-    const a: u32 = max(2,3);   // 3
-    const b: u32 = max(2,3);   // 3
-    return a + b;
+    const a: Point = Point{x: 2, y: 3};
+    const b: u32 = max(a.x, a.y);   // 3
+    return a.x + a.y;
 }

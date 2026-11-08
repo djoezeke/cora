@@ -14,6 +14,29 @@
 
 namespace cora::cir
 {
+    struct CIRInstruction
+    {
+        std::string opcode;
+        std::vector<std::string> operands;
+        std::uint32_t opcodeId = 0;
+        std::uint32_t extraOffset = 0;
+        std::uint32_t extraCount = 0;
+        std::uint32_t stringOffset = 0;
+        std::uint32_t sourceLocation = 0;
+        cora::ast::SourceRange range{};
+    };
+
+    struct CIRInstructionArray
+    {
+        std::vector<CIRInstruction> values;
+    };
+
+    struct CIRSourceLocation
+    {
+        cora::ast::SourceRange range{};
+        std::uint32_t instruction = 0;
+    };
+
     struct CIRInput
     {
         std::string sourceFileId;
@@ -31,7 +54,12 @@ namespace cora::cir
         std::size_t lineCount = 1;
         std::size_t functionCount = 0;
         std::shared_ptr<cora::ast::AST> ast;
+        std::vector<CIRInstruction> instructions;
+        std::vector<std::uint32_t> extra;
+        std::vector<std::uint8_t> stringBytes;
+        std::vector<CIRSourceLocation> sourceLocations;
     };
+
     struct CIRArtifact
     {
         cora::core::Digest key;

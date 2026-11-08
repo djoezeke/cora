@@ -1,6 +1,7 @@
 #include <Cora/CIR/CIR.h>
 #include <Cora/Core/SHA256.h>
 
+#include <algorithm>
 #include <charconv>
 #include <iomanip>
 #include <sstream>
@@ -9,6 +10,232 @@ namespace cora::cir
 {
     namespace
     {
+        void lowerStatement(const cora::ast::Statement &statement,
+                            std::vector<CIRInstruction> &instructions)
+        {
+            const auto add = [&](std::string opcode, std::string operand = {}) {
+                instructions.push_back({std::move(opcode), {std::move(operand)},
+                                        0, 0, 0, 0, 0, statement.range});
+            };
+            switch (statement.kind)
+            {
+            case cora::ast::Statement::Kind::Block:
+                add("block");
+                for (const auto &child : statement.statements)
+                    lowerStatement(*child, instructions);
+                if (statement.tail)
+                    add("tail-expression");
+                break;
+            case cora::ast::Statement::Kind::Variable:
+                add(statement.isConst ? "const" : "let", statement.name);
+                break;
+            case cora::ast::Statement::Kind::If:
+                add("branch");
+                if (statement.thenBranch)
+                    lowerStatement(*statement.thenBranch, instructions);
+                if (statement.elseBranch)
+                    lowerStatement(*statement.elseBranch, instructions);
+                break;
+            case cora::ast::Statement::Kind::While:
+                add("loop");
+                if (statement.body)
+                    lowerStatement(*statement.body, instructions);
+                break;
+            case cora::ast::Statement::Kind::Return:
+                add("return");
+                break;
+            case cora::ast::Statement::Kind::Expression:
+                add("expression");
+                break;
+            }
+        }
+
+        void lowerAST(const cora::ast::AST &ast, std::vector<CIRInstruction> &instructions)
+        {
+            for (const auto &function : ast.module.functions)
+            {
+                instructions.push_back({"function", {function->name},
+                                        0, 0, 0, 0, 0, function->range});
+                if (function->body)
+                    lowerStatement(*function->body, instructions);
+                instructions.push_back({"end-function", {function->name},
+                                        0, 0, 0, 0, 0, function->range});
+            }
+        }
+
+        std::uint32_t appendString(std::vector<std::uint8_t> &pool, const std::string &value)
+        {
+            const auto offset = static_cast<std::uint32_t>(pool.size());
+            pool.insert(pool.end(), value.begin(), value.end());
+            pool.push_back(0);
+            return offset;
+        }
+
+        void finalizeModule(CIRModule &module)
+        {
+            module.stringBytes.clear();
+            module.extra.clear();
+            module.sourceLocations.clear();
+            std::vector<std::string> opcodes;
+            for (std::size_t index = 0; index < module.instructions.size(); ++index)
+            {
+                auto &instruction = module.instructions[index];
+                auto opcode = std::find(opcodes.begin(), opcodes.end(), instruction.opcode);
+                if (opcode == opcodes.end())
+                {
+                    opcodes.push_back(instruction.opcode);
+                    instruction.opcodeId = static_cast<std::uint32_t>(opcodes.size());
+                }
+                else
+                    instruction.opcodeId = static_cast<std::uint32_t>(
+                        std::distance(opcodes.begin(), opcode) + 1);
+                instruction.stringOffset = appendString(module.stringBytes, instruction.opcode);
+                instruction.extraOffset = static_cast<std::uint32_t>(module.extra.size());
+                instruction.extraCount = static_cast<std::uint32_t>(instruction.operands.size());
+                for (const auto &operand : instruction.operands)
+                    module.extra.push_back(appendString(module.stringBytes, operand));
+                instruction.sourceLocation = static_cast<std::uint32_t>(
+                    module.sourceLocations.size());
+                module.sourceLocations.push_back({instruction.range,
+                                                  static_cast<std::uint32_t>(index)});
+            }
+        }
+
+        std::string serializeU32(const std::vector<std::uint32_t> &values)
+        {
+            std::ostringstream output;
+            for (std::size_t i = 0; i < values.size(); ++i)
+            {
+                if (i != 0)
+                    output << ',';
+                output << values[i];
+            }
+            return output.str();
+        }
+
+        bool deserializeU32(std::string_view text, std::vector<std::uint32_t> &values)
+        {
+            if (text.empty())
+                return true;
+            std::size_t begin = 0;
+            while (begin < text.size())
+            {
+                const std::size_t end = text.find(',', begin);
+                const auto part = text.substr(begin, end == std::string_view::npos
+                                                        ? text.size() - begin
+                                                        : end - begin);
+                std::uint32_t value = 0;
+                const auto parsed = std::from_chars(part.data(), part.data() + part.size(), value);
+                if (parsed.ec != std::errc{} || parsed.ptr != part.data() + part.size())
+                    return false;
+                values.push_back(value);
+                if (end == std::string_view::npos)
+                    break;
+                begin = end + 1;
+            }
+            return true;
+        }
+
+        std::string serializeLocations(const std::vector<CIRSourceLocation> &locations)
+        {
+            std::ostringstream output;
+            for (std::size_t i = 0; i < locations.size(); ++i)
+            {
+                if (i != 0)
+                    output << ';';
+                const auto &location = locations[i];
+                output << location.instruction << ','
+                       << location.range.begin.offset << ',' << location.range.begin.line << ','
+                       << location.range.begin.column << ',' << location.range.end.offset << ','
+                       << location.range.end.line << ',' << location.range.end.column;
+            }
+            return output.str();
+        }
+
+        bool deserializeLocations(std::string_view text,
+                                  std::vector<CIRSourceLocation> &locations)
+        {
+            if (text.empty())
+                return true;
+            std::size_t begin = 0;
+            while (begin < text.size())
+            {
+                const std::size_t end = text.find(';', begin);
+                const auto item = text.substr(begin, end == std::string_view::npos
+                                                        ? text.size() - begin
+                                                        : end - begin);
+                std::vector<std::uint32_t> values;
+                if (!deserializeU32(item, values) || values.size() != 7)
+                    return false;
+                CIRSourceLocation location;
+                location.instruction = values[0];
+                location.range.begin.offset = values[1];
+                location.range.begin.line = values[2];
+                location.range.begin.column = values[3];
+                location.range.end.offset = values[4];
+                location.range.end.line = values[5];
+                location.range.end.column = values[6];
+                locations.push_back(location);
+                if (end == std::string_view::npos)
+                    break;
+                begin = end + 1;
+            }
+            return true;
+        }
+
+        std::string serializeInstructions(const std::vector<CIRInstruction> &instructions)
+        {
+            std::ostringstream output;
+            for (const auto &instruction : instructions)
+            {
+                output << std::quoted(instruction.opcode) << ' ' << instruction.operands.size();
+                for (const auto &operand : instruction.operands)
+                    output << ' ' << std::quoted(operand);
+                output << ' ' << instruction.range.begin.offset << ' '
+                       << instruction.range.begin.line << ' ' << instruction.range.begin.column
+                       << ' ' << instruction.range.end.offset << ' '
+                       << instruction.range.end.line << ' ' << instruction.range.end.column
+                       << ' ' << instruction.opcodeId << ' ' << instruction.extraOffset << ' '
+                       << instruction.extraCount << ' ' << instruction.stringOffset << ' '
+                       << instruction.sourceLocation;
+                output << '\n';
+            }
+            return output.str();
+        }
+
+        bool deserializeInstructions(std::string_view text,
+                                     std::vector<CIRInstruction> &instructions)
+        {
+            std::istringstream input{std::string(text)};
+            std::string line;
+            while (std::getline(input, line))
+            {
+                std::istringstream instructionInput(line);
+                CIRInstruction instruction;
+                std::size_t operands = 0;
+                if (!(instructionInput >> std::quoted(instruction.opcode) >> operands))
+                    return false;
+                for (std::size_t i = 0; i < operands; ++i)
+                {
+                    std::string operand;
+                    if (!(instructionInput >> std::quoted(operand)))
+                        return false;
+                    instruction.operands.push_back(std::move(operand));
+                }
+                if (!(instructionInput >> instruction.range.begin.offset >>
+                      instruction.range.begin.line >> instruction.range.begin.column >>
+                      instruction.range.end.offset >> instruction.range.end.line >>
+                      instruction.range.end.column))
+                    return false;
+                if (!(instructionInput >> instruction.opcodeId >> instruction.extraOffset >>
+                      instruction.extraCount >> instruction.stringOffset >>
+                      instruction.sourceLocation))
+                    return false;
+                instructions.push_back(std::move(instruction));
+            }
+            return true;
+        }
+
         std::string field(const std::string &text, std::string_view name)
         {
             const std::string prefix = std::string(name) + "=";
@@ -160,7 +387,17 @@ namespace cora::cir
         std::string serializeAST(const cora::ast::AST &ast)
         {
             std::ostringstream out;
-            out << "AST1 " << ast.module.functions.size() << ' ';
+            out << "AST2 " << ast.module.types.size() << ' ';
+            for (const auto &type : ast.module.types)
+            {
+                out << std::quoted(type.name) << ' ' << type.fields.size() << ' ';
+                for (const auto &field : type.fields)
+                {
+                    out << std::quoted(field.name) << ' ';
+                    writeType(out, field.type);
+                }
+            }
+            out << ast.module.functions.size() << ' ';
             for (const auto &function : ast.module.functions)
             {
                 writeRange(out, function->range);
@@ -219,9 +456,31 @@ namespace cora::cir
         {
             std::istringstream in{std::string(payload)};
             std::string version;
-            std::size_t functions = 0;
-            if (!(in >> version >> functions) || version != "AST1")
+            std::size_t typesOrFunctions = 0;
+            if (!(in >> version >> typesOrFunctions) ||
+                (version != "AST1" && version != "AST2"))
                 return false;
+            std::size_t functions = typesOrFunctions;
+            if (version == "AST2")
+            {
+                for (std::size_t i = 0; i < typesOrFunctions; ++i)
+                {
+                    cora::ast::TypeDecl type;
+                    std::size_t fields = 0;
+                    if (!(in >> std::quoted(type.name) >> fields))
+                        return false;
+                    for (std::size_t f = 0; f < fields; ++f)
+                    {
+                        cora::ast::Field field;
+                        if (!(in >> std::quoted(field.name)) || !readType(in, field.type))
+                            return false;
+                        type.fields.push_back(std::move(field));
+                    }
+                    ast.module.types.push_back(std::move(type));
+                }
+                if (!(in >> functions))
+                    return false;
+            }
             for (std::size_t i = 0; i < functions; ++i)
             {
                 auto function = std::make_unique<cora::ast::Function>();
@@ -294,6 +553,12 @@ namespace cora::cir
                << "functions=" << module.functionCount << '\n';
         if (module.ast)
             output << "ast=" << encodeHex(serializeAST(*module.ast)) << '\n';
+        output << "instructions=" << encodeHex(serializeInstructions(module.instructions)) << '\n';
+        output << "extra=" << serializeU32(module.extra) << '\n'
+               << "strings=" << encodeHex(std::string(
+                                      reinterpret_cast<const char *>(module.stringBytes.data()),
+                                      module.stringBytes.size())) << '\n'
+               << "locations=" << serializeLocations(module.sourceLocations) << '\n';
         const std::string text = output.str();
         return {text.begin(), text.end()};
     }
@@ -347,6 +612,51 @@ namespace cora::cir
                 return std::nullopt;
             }
             result.module.ast = std::move(ast);
+            result.module.ast->buildStorage();
+            const auto instructions = decodeHex(field(text, "instructions"));
+            if (instructions)
+            {
+                if (!deserializeInstructions(*instructions, result.module.instructions))
+                {
+                    if (error)
+                        *error = "invalid CIR instruction payload";
+                    return std::nullopt;
+                }
+            }
+            else
+                lowerAST(*result.module.ast, result.module.instructions);
+            finalizeModule(result.module);
+            const auto extra = field(text, "extra");
+            const auto strings = decodeHex(field(text, "strings"));
+            const auto locations = field(text, "locations");
+            result.module.extra.clear();
+            result.module.stringBytes.clear();
+            result.module.sourceLocations.clear();
+            if (!deserializeU32(extra, result.module.extra) || !strings ||
+                !deserializeLocations(locations, result.module.sourceLocations))
+            {
+                if (error)
+                    *error = "invalid CIR data arrays";
+                return std::nullopt;
+            }
+            result.module.stringBytes.assign(strings->begin(), strings->end());
+            if (result.module.instructions.size() != result.module.sourceLocations.size())
+            {
+                if (error)
+                    *error = "CIR instruction/source mapping count mismatch";
+                return std::nullopt;
+            }
+            for (const auto &instruction : result.module.instructions)
+            {
+                if (instruction.extraOffset + instruction.extraCount > result.module.extra.size() ||
+                    instruction.stringOffset >= result.module.stringBytes.size() ||
+                    instruction.sourceLocation >= result.module.sourceLocations.size())
+                {
+                    if (error)
+                        *error = "CIR instruction array contains an invalid offset";
+                    return std::nullopt;
+                }
+            }
         }
         return result;
     }
@@ -363,6 +673,11 @@ namespace cora::cir
                 ++result.module.lineCount;
         result.module.functionCount = parsed.ast ? parsed.ast->module.functions.size() : 0;
         result.module.ast = parsed.ast;
+        if (result.module.ast)
+            lowerAST(*result.module.ast, result.module.instructions);
+        finalizeModule(result.module);
+        for (const auto &token : parsed.tokens.tokens)
+            appendString(result.module.stringBytes, token.text);
         result.publicInterfaceDigest = parsed.ast ? interfaceDigest(*parsed.ast)
                                                   : cora::crypto::SHA256::hash(input.moduleId);
         return result;

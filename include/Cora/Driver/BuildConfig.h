@@ -22,7 +22,9 @@ namespace cora::driver
 
     struct BuildConfig
     {
-        std::string command = "build";
+        std::filesystem::path projectRoot;
+        std::filesystem::path manifestPath;
+        std::string command = ".cora-build";
         std::filesystem::path input;
         std::filesystem::path output;
         std::filesystem::path cacheRoot = ".cora-cache";

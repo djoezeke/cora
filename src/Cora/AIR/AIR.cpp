@@ -33,6 +33,8 @@ namespace cora::air
         }
 
         std::unordered_set<std::string> functions;
+        std::uint32_t nextValue = 1;
+        result.basicBlockIds.push_back(0);
         for (const auto &function : result.ast->module.functions)
         {
             if (!functions.insert(function->name).second)
@@ -43,7 +45,16 @@ namespace cora::air
             airFunction.parameterCount = function->parameters.size();
             airFunction.statementCount = function->body ? countStatements(*function->body) : 0;
             result.functions.push_back(std::move(airFunction));
-            result.instructions.push_back({"function", function->name});
+            result.instructions.push_back({nextValue++, "function", {}, function->name});
+        }
+        for (const auto &instruction : cir.module.instructions)
+        {
+            if (instruction.opcode == "function" || instruction.opcode == "end-function")
+                continue;
+            result.instructions.push_back(
+                {nextValue++, instruction.opcode, {}, instruction.operands.empty()
+                                                       ? std::string{}
+                                                       : instruction.operands.front()});
         }
         result.verified = result.errors.empty();
         return result;
