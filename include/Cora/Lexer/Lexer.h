@@ -1,21 +1,22 @@
 #ifndef CORA_LEXER_LEXER_H
 #define CORA_LEXER_LEXER_H
 
+#include <Cora/Lexer/LexerConfig.h>
 #include <Cora/Lexer/Token.h>
-
 #include <string>
 
-namespace cora
+#include <Cora/Diag/DiagnosticEngine.h>
+#include <Cora/Lexer/Token.h>
+
+namespace cora::parse
 {
-    struct LexerConfig
-    {
-        bool enableComments = true;
-        bool enableWhitespace = true;
-    };
 
     class Lexer final
     {
     public:
+        Lexer(std::string source, std::uint32_t fileId = 0,
+              LexerConfig config = {});
+
         explicit Lexer(std::string source, std::uint32_t fileId = 0,
                        LexerConfig config = {});
         [[nodiscard]] Token nextToken();
