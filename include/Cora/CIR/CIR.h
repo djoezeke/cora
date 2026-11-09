@@ -14,64 +14,65 @@
 
 namespace cora::cir
 {
-    struct CIRInstruction
+
+    struct CIR
     {
-        std::string opcode;
-        std::vector<std::string> operands;
-        std::uint32_t opcodeId = 0;
-        std::uint32_t extraOffset = 0;
-        std::uint32_t extraCount = 0;
-        std::uint32_t stringOffset = 0;
-        std::uint32_t sourceLocation = 0;
-        cora::ast::SourceRange range{};
+
+        using IIndex = uint32_t; // CIR Instruction reference
+        using EIndex = uint32_t; // extra data reference
+        using BIndex = uint32_t; // body reference
+
+        static constexpr IIndex INull = 0;
+        static constexpr IIndex ENull = 0;
+        static constexpr IIndex BNull = 0;
+
+        enum class Tag : uint8_t
+        {
+        };
+
+        struct Inst
+        {
+            Tag tag;
+            union
+            {
+            } data;
+        };
+
+        struct Body
+        {
+            std::vector<Inst> inst;
+            std::vector<uint32_t> extra;
+        };
+
+        std::vector<Body> bodies;
+        std::vector<std::string_view> strings;
     };
 
-    struct CIRInstructionArray
+    struct ResLoc
     {
-        std::vector<CIRInstruction> values;
+        enum class Tag : uint8_t
+        {
+            None,
+        };
+        Tag tag = Tag::None;
+        CIR::IIndex ref = 0;
+
+        static ResLoc None()
+        {
+            return {Tag::None, 0};
+        }
     };
 
-    struct CIRSourceLocation
+    struct GenCir
     {
-        cora::ast::SourceRange range{};
-        std::uint32_t instruction = 0;
+        bool is_comptime = false;
+        CIR::Body *body = nullptr;
+        GenCir *parent = nullptr;
+        ResLoc rl = ResLoc::None();
+        CIR::IIndex break_blk = CIR::INull;
+        CIR::IIndex continue_blk = CIR::INull;
     };
 
-    struct CIRInput
-    {
-        std::string sourceFileId;
-        std::string moduleId;
-        cora::core::Digest sourceDigest;
-        std::string frontendVersion = "cora-cir-v2";
-        std::string frontendOptions;
-        std::vector<cora::core::Digest> generatedInputDigests;
-        [[nodiscard]] std::string canonical() const;
-        [[nodiscard]] cora::core::Digest key() const;
-    };
-    struct CIRModule
-    {
-        std::size_t tokenCount = 0;
-        std::size_t lineCount = 1;
-        std::size_t functionCount = 0;
-        std::shared_ptr<cora::ast::AST> ast;
-        std::vector<CIRInstruction> instructions;
-        std::vector<std::uint32_t> extra;
-        std::vector<std::uint8_t> stringBytes;
-        std::vector<CIRSourceLocation> sourceLocations;
-    };
-
-    struct CIRArtifact
-    {
-        cora::core::Digest key;
-        CIRInput input;
-        CIRModule module;
-        cora::core::Digest publicInterfaceDigest;
-        [[nodiscard]] std::vector<std::uint8_t> serialize() const;
-        [[nodiscard]] static std::optional<CIRArtifact> deserialize(
-            const std::vector<std::uint8_t> &bytes, std::string *error = nullptr);
-    };
-    [[nodiscard]] CIRArtifact build(const CIRInput &input,
-                                    const cora::ParsedUnit &parsed);
 } // namespace cora::cir
 
 #endif // CORA_CIR_CIR_H

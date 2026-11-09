@@ -1,55 +1,32 @@
-#pragma once
+#ifndef CORA_DIAGNOSTIC_EMITTER_H
+#define CORA_DIAGNOSTIC_EMITTER_H
 
-#include "diag/diagnostic.h"
-#include <string_view>
+#include <Cora/Diag/Diagnostic.h>
 
 #include <cstdint>
+#include <string_view>
 #include <vector>
 
-namespace diag
+namespace cora::diag
 {
 
-    /// The renderer interface. Multiple consumers can be chained.
-    class DiagnosticConsumer
+    class DiagnosticEmitter
     {
     public:
-        virtual ~DiagnosticConsumer() = default;
+        const SourceManager &sourceManager;
 
-        virtual void handle(const Diagnostic &d) = 0;
-        virtual void handle_raw_text(std::string_view /*text*/) {}
-        virtual void finish() {}
-    };
-
-    /// Fan out each diagnostic to several independent consumers.
-    class CompositeConsumer final : public DiagnosticConsumer
-    {
     public:
-        void add(DiagnosticConsumer *consumer)
-        {
-            if (consumer)
-                consumers_.push_back(consumer);
-        }
-
-        void handle(const Diagnostic &d) override
-        {
-            for (auto *consumer : consumers_)
-                consumer->handle(d);
-        }
-
-        void handle_raw_text(std::string_view text) override
-        {
-            for (auto *consumer : consumers_)
-                consumer->handle_raw_text(text);
-        }
-
-        void finish() override
-        {
-            for (auto *consumer : consumers_)
-                consumer->finish();
-        }
-
-    private:
-        std::vector<DiagnosticConsumer *> consumers_;
+        virtual ~DiagnosticEmitter() = default;
     };
 
-} // namespace diag
+    class TextEmitter final : public DiagnosticEmitter
+    {
+    };
+
+    class JsonEmitter final : public DiagnosticEmitter
+    {
+    };
+
+} // namespace cora::diag
+
+#endif // CORA_DIAGNOSTIC_EMITTER_H

@@ -1,11 +1,13 @@
-#pragma once
+#ifndef CORA_DIAGNOSTIC_BUILDER_H
+#define CORA_DIAGNOSTIC_BUILDER_H
 
-#include "diag/diagnostic.h"
-#include "diag/engine.h"
-#include <string>
+#include <Cora/Core/SourceLocation.h>
+#include <Cora/Diag/Diagnostic.h>
+
+#include <array>
 #include <string_view>
 
-namespace diag
+namespace cora::diag
 {
 
     /// Stack-only fluent builder. RAII: emits on destruction unless the
@@ -112,4 +114,6 @@ namespace diag
         bool emitted_ = false;
     };
 
-} // namespace diag
+} // namespace cora::diag
+
+#endif // CORA_DIAGNOSTIC_BUILDER_H

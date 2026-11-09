@@ -1,9 +1,11 @@
-#pragma once
+#ifndef CORA_DIAGNOSTIC_FLAGPARSER_H
+#define CORA_DIAGNOSTIC_FLAGPARSER_H
 
-#include "diag/engine.h"
+#include <Cora/Diag/DiagnosticEngine.h>
+
 #include <string_view>
 
-namespace diag
+namespace cora::diag
 {
 
     /// Cold-path parser for -W / -fdiagnostics flags. Accepts argv-style tokens
@@ -12,7 +14,7 @@ namespace diag
     class FlagParser
     {
     public:
-        explicit FlagParser(DiagnosticEngine &eng) : eng_(eng) {}
+        explicit FlagParser(DiagnosticEngine &eng);
 
         /// Parse one command-line token. Returns true if it was a diagnostic flag.
         bool parse(std::string_view arg);
@@ -28,4 +30,6 @@ namespace diag
         DiagnosticEngine &eng_;
     };
 
-} // namespace diag
+} // namespace cora::diag
+
+#endif // CORA_DIAGNOSTIC_FLAGPARSER_H

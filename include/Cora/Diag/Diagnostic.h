@@ -1,14 +1,17 @@
-#pragma once
+#ifndef CORA_DIAGNOSTIC_DIAGNOSTIC_H
+#define CORA_DIAGNOSTIC_DIAGNOSTIC_H
 
-#include "diag/diag_arg.h"
-#include "diag/diagid.h"
-#include "diag/fixit.h"
-#include "diag/span.h"
+#include <Cora/Core/SourceLocation.h>
+
+// #include "diag/diag_arg.h"
+// #include "diag/diagid.h"
+// #include "diag/fixit.h"
+// #include "diag/span.h"
 
 #include <array>
 #include <cstdint>
 
-namespace diag
+namespace cora::diag
 {
 
     inline constexpr std::size_t MaxArgs = 4;
@@ -51,4 +54,6 @@ namespace diag
         Diagnostic(DiagID i, DiagnosticLevel l, SourceLocation s) : id(i), level(l), loc(s) {}
     };
 
-} // namespace diag
+} // namespace cora::diag
+
+#endif // CORA_DIAGNOSTIC_DIAGNOSTIC_H

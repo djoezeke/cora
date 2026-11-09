@@ -1,6 +1,6 @@
-#pragma once
+#ifndef CORA_DIAGNOSTIC_CODES_H
+#define CORA_DIAGNOSTIC_CODES_H
 
-#include "diag/fwd.h"
 #include <algorithm>
 #include <array>
 #include <cstddef>
@@ -8,7 +8,7 @@
 #include <optional>
 #include <string_view>
 
-namespace diag
+namespace cora::diag
 {
 
     enum class DiagnosticLevel : std::uint8_t
@@ -220,4 +220,6 @@ namespace diag
         return std::nullopt;
     }
 
-} // namespace diag
+} // namespace cora::diag
+
+#endif // CORA_DIAGNOSTIC_CODES_H

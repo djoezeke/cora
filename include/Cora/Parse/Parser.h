@@ -15,14 +15,18 @@ namespace cora
         SourceRange range{};
         std::string message;
     };
+
     struct ParsedUnit
     {
         TokenBuffer tokens;
         std::shared_ptr<cora::ast::AST> ast;
         std::vector<ParseDiagnostic> diagnostics;
         [[nodiscard]] bool success() const noexcept
-        { return diagnostics.empty() && ast != nullptr; }
+        {
+            return diagnostics.empty() && ast != nullptr;
+        }
     };
+
     class Parser final
     {
     public:
