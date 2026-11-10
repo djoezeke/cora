@@ -1,26 +1,33 @@
 #ifndef CORA_AST_NODES_H
 #define CORA_AST_NODES_H
 
-#include <Cora/Lexer/Token.h>
-
 #include <cstdint>
-#include <memory>
-#include <string>
-#include <vector>
+
+#define NODES_EXPRESSION
+
+#define NODES_STATEMENT
 
 namespace cora::ast
 {
 
+    // -------- Node: 20 bytes, tag + main_token + 12-byte union ---------------
     struct Node
     {
+        // -------- fundamental index types ----------------------------------------
 
         using NIndex = uint32_t; // node reference
         using TIndex = uint32_t; // token reference
         using EIndex = uint32_t; // reference into extra_data
 
+        static constexpr NIndex NNull = 0; // "no node"
+        static constexpr EIndex ENull = 0; // "empty list"
+
         enum class Tag : uint8_t
         {
+#define F()
+
             Root,
+
             // Statements
             Block,
             ExprStmt,
@@ -48,6 +55,7 @@ namespace cora::ast
             IndexExpr,
             ArrayInit,
             Paren,
+#undef F
         };
 
         union Data
@@ -135,17 +143,22 @@ namespace cora::ast
                 uint32_t elem_count;
             } array_init;
 
+            EIndex block_stmts;
+
             // Paren / ExprStmt: inner expr
             NIndex inner;
         };
 
         Tag tag;
-        Data data;
+        // (3 bytes padding)
         TIndex token;
+        Data data;
     };
 
     static const char *tagName(Node::Tag t)
     {
+#define F()
+
         switch (t)
         {
         case Node::Tag::Root:
@@ -200,6 +213,8 @@ namespace cora::ast
             return "Paren";
         }
         return "?";
+
+#undef F
     }
 }
 

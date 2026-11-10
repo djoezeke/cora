@@ -1,9 +1,6 @@
 #ifndef CORA_AST_AST_H
 #define CORA_AST_AST_H
 
-#include <Cora/AST/ASTNodes.h>
-#include <Cora/AST/ASTStorage.h>
-
 #include <Cora/AST/Node.h>
 
 #include <span>
@@ -17,13 +14,16 @@ namespace cora::ast
 
     struct AST
     {
+        // -------- fundamental index types ----------------------------------------
+        using NIndex = Node::NIndex; // node reference
+        using TIndex = Node::TIndex; // token reference
+        using EIndex = Node::EIndex; // reference into extras
 
-        using NIndex = uint32_t; // node reference
-        using TIndex = uint32_t; // token reference
-        using EIndex = uint32_t; // reference into extras
+        using Tag = Node::Tag;
+        using Node = ast::Node;
 
         // ----------- Storage ------------
-        std::vector<ast::Node> nodes;
+        std::vector<Node> nodes;
         std::vector<uint32_t> extras;
         std::vector<Token> tokens;
         // std::vector<Diagnostic> errors;

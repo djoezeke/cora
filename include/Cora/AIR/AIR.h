@@ -1,6 +1,8 @@
 #ifndef CORA_AIR_AIR_H
 #define CORA_AIR_AIR_H
 
-#include <Cora/AIR/AIRPasses.h>
+// Control-Flow Graph (CFG)
+// Purpose - Borrow checking, safety rules, and internal compiler optimization.
+
 
 #endif

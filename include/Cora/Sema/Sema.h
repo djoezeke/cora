@@ -1,33 +1,27 @@
-#ifndef CORA_CIR_CIR_H
-#define CORA_CIR_CIR_H
+#ifndef CORA_SEMA_SEMA_H
+#define CORA_SEMA_SEMA_H
 
-#include <cstdint>
-#include <memory>
-#include <optional>
-#include <string>
-#include <vector>
+#include <Cora/CIR/CIR.h>
+#include <Cora/Core/SourceManager.h>
+#include <Cora/Diag/DiagnosticEngine.h>
 
 namespace cora::sema
 {
 
-    struct Type
-    {
-        using Id = uint32_t;
-        enum class Tag
-        {
-        };
+    using namespace cora::core;
+    using namespace cora::diag;
 
-        Tag tag;
-        Id ret = 0;
-        Id pointee = 0;
-        std::vector<Id> params;
-    };
-
-    struct Types
+    class Sema final
     {
-        /* data */
+
+    public:
+        Sema(cir::CIR &cir, SourceManager &sm, DiagnosticEngine &de);
+
+    private:
+        SourceManager &m_SM;
+        DiagnosticEngine &m_DE;
     };
 
 } // namespace cora::sema
 
-#endif // CORA_CIR_CIR_H
+#endif // CORA_SEMA_SEMA_H
