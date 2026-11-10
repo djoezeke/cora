@@ -88,12 +88,7 @@ namespace cora
         // This
         Tag tag;
         Loc loc;
-
-        // This
-        Tag tag;
         uint8_t flag;
-        uint16_t lenght;
-        uint32_t offset;
 
         union
         {
@@ -101,7 +96,6 @@ namespace cora
             double float_val;
             uint32_t interned_id;
             uint32_t error_id;
-            uint32_t keyword_id;
         };
     };
 
