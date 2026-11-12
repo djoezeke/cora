@@ -1,0 +1,372 @@
+//! A doc comment that applies to the implicit anonymous mod of this file.
+
+// Line Comment
+//! Line Doc Comment
+/** Block Comment **/
+/*! Block Doc Comment **/
+/** Nested /** Block Comment **/ **/
+
+// ruff: lint on(readability-identifier-naming)
+// ruff: lint off(readability-identifier-naming)
+
+// ruff: format on
+// ruff: format off
+
+// cora: diagnostic push
+// cora: diagnostic pop
+// cora: diagnostic ignore
+
+// region: 
+// endregion:
+
+public mod main;
+
+private mod detail { 
+    func id() -> i32 {
+        return 32; 
+    }
+
+    const id: i32 = id();
+
+};
+
+{
+    using ::detail::id();
+    using main::detail::id();
+
+    const id: i32 = id();
+
+}
+
+const id: i32 = ::details::id();
+const id: i32 = main::details::id();
+
+/// keywords
+// explicit
+// override
+// inline
+// this
+
+/// Standard Library Classes
+// optional<type>
+
+/// Standard Library Functions
+// addressof()
+// copy()
+
+public extern func min(a: i32, b: i32) -> i32 {}
+
+// typedef struct Point Point;
+// typedef int StudentID;
+
+
+// static/extern/export
+// constexpr
+// constexpr const Value& operator[](Enum key) const;
+// private func add_internal(a: i32, b: const i32) noexcept -> const i32 {}
+
+// Casting 
+// cast<type>(value)
+
+// function 
+type StudentID int32;
+
+const program := 23;
+
+public mod main
+
+// using std::io::println;
+// using StudentID = int32;
+// ::curent::func();
+
+// #pragma warning(push)
+// #pragma warning(disable : 4127)
+// #pragma warning(pop)
+
+// #error "ouch"
+// #warning "ouch"
+
+comptime @define(MAX,200)
+comptime @undefine(MAX)
+
+comptime {
+    if (!defined(MAX)){
+        @define(MAX,200)
+    }
+}
+
+
+
+@defined(MAX)
+@error("message")
+@warning("message")
+
+// #define
+// #undefine
+// #if defined()
+// #elif defined()
+// #else
+// #endif
+
+let array: i32[5] = {1, 2, 3, 4, 5};
+let array = &[1, 2, 3];
+
+type Callback = struct {
+    // function pointer
+    new: func(a: i32, b: i32) -> i32,
+}
+
+type add := func(a: i32, b: i32) -> i32 {
+    return a + b;
+}
+
+type add := func(u: *User) (a: i32, b: i32) -> {
+
+}
+
+[[nodiscard]] func add(a: i32, b: i32) -> i32 {
+    return a + b;
+}
+
+comptime func add<T>(a: T, b: T) -> T {
+    return a + b;
+}
+
+// macro example
+
+// Attributes
+[[fallthrough]]
+[[deprecated]]
+[[unused]]
+
+/// Unions
+
+type Value = union {}
+
+/// Structures
+
+type User = struct {
+    public using a_type = T;
+    private using b_type = T;
+
+    id: u64,
+    age: u32
+}
+
+const zeke: User = {id: 1, age:21}
+
+func(u: *User) getID() -> u64 {
+    return u->id;
+}
+
+const zeke_id: u32 = zeke.getID();
+
+func(u: *User) getIDPlus<T>(T: inc) -> T {
+    return u->id + inc;
+}
+
+const zeke_id: u32 = zeke.getIDPlus<u32>(23);
+
+comptime type User<T,S> = struct {
+    id: T,
+    age: S
+}
+
+const czeke: User<i32,i32> = {id: 1, age:21}
+
+comptime func(u: *User<T,S>) getID() -> T {
+    return u->id;
+}
+
+const zeke_id:= czeke.getID();
+
+comptime func (u: *User<T,S>) getIDPlus<X>(X: inc) -> X {
+    return u->id + inc;
+}
+
+const zeke_id:= czeke.getIDPlus(23);
+
+// Enum
+
+type Color = enum {
+    red: = 1,
+    green: 2
+}
+
+type Color = enum(code: i32) {
+    red(): u64,
+    age(): u32
+}
+
+comptime type Color<T: common_with() > = enum {
+    id: T,
+    age: S
+}
+
+
+// switch
+
+switch(color){
+    MONDAY -> "monday"
+    MONDAY -> "monday"
+    MONDAY -> "monday"
+    MONDAY -> "monday"
+    MONDAY -> "monday"
+}
+
+switch(day){
+    MONDAY, TUESDAY, WEDNESDAY, THURSDAY, FRIDAY -> "school"
+    SATURDAY, SUNDAY -> "home"
+}
+
+// Interfaces
+
+type Reader = interfaces {
+    data: u64
+}
+
+func (r: *Reader) read() -> none {
+    // data reading
+}
+
+type FileReader = struct : Reader  {
+    file_id: i32
+}
+
+func (r: *FileReader) read() -> none {
+    // data reading
+}
+
+///////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////
+
+import (
+	std::fmt::{println, writeln};
+	std::sys;
+	std::log;
+)
+
+var (
+    id: i32 = 20;
+    pos: i32 = 10;
+)
+
+const (
+    max: i32 = 20;
+    min: i32 = 10;
+)
+
+type (
+	Status = enum {
+		Passed,
+        Failed
+	}
+
+	Event = struct {
+		data: i64
+	}
+
+	Observer = interface {
+		func OnNotify(Event) -> none ;
+	}
+
+	Notifier = interface {
+		func Register(Observer) -> none;
+		func Deregister(Observer) -> none;
+		func Notify(Event) -> none;
+	}
+)
+
+///////////////////////////////////////////////////////////
+/// 
+///////////////////////////////////////////////////////////
+mut x = 0x123; // 123u32, 123_i32                           
+mut x = 0x123; // 123f32, 123f64 
+
+mut x = ''; //                           
+mut x = ''u8; //                           
+mut x = r''u16; //                           
+mut x = r''u32; //                           
+
+mut x = ""u8; //                           
+mut x = ""u16; //                           
+mut x = ""u32; //                           
+mut x = r""u16; //                           
+
+mut x = 2.0e3f32;                       
+mut x = 2.0f64;
+mut x = 2.0f128;
+
+///////////////////////////////////////////////////////////
+/// 
+///////////////////////////////////////////////////////////
+
+trait Shape {
+    type Pos =  u32[2];
+
+    func draw(s: &Surface) -> void;
+}
+
+type Rect = struct {
+    width: u32,
+    height: u32,
+}
+
+impl Rect {
+    func(r: &Rect) area() -> u32 {
+        r.width * r.height
+    }
+}
+
+impl Shape for Rect {
+    func(r: &Rect) draw(s: &Surface) -> void {
+        r.width * r.height
+    }
+}
+
+///////////////////////////////////////////////////////////
+/// Generic Programming
+///////////////////////////////////////////////////////////
+
+func max<T>(nums: ...T) -> T {
+    return a + b;
+}
+
+func add<T>(a: T, b: T) -> T {
+    return a + b;
+}
+
+type array<T, S: u32> = struct {
+    data: T[S]
+}
+
+///////////////////////////////////////////////////////////
+/// Decorator Pattern
+///////////////////////////////////////////////////////////
+
+type Object = func(u32) -> u32;
+
+func LogDecorate(fn: Object) -> Object {
+	return func(n: u32) -> u32 {
+
+		println("Starting the execution with the integer", n);
+		result := fn(n);
+		log.Println("Execution is completed with the result", result);
+
+        return result;
+	}
+}
+
+func Double(n: u32) -> u32 {
+    return n * 2;
+}
+
+func Tripple(n: u32) -> u32 {
+    return n * 3;
+}
+
+LogDouble := LogDecorate(Double);
+LogTripple := LogDecorate(Double);
+
+LogDouble(5);
+LogTripple(5)

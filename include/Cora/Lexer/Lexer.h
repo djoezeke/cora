@@ -29,7 +29,9 @@ namespace cora::lexer
         //   Identifier: [A-Za-z_][A-Za-z0-9_]*
         //   Number:     [0-9]+ ( (NumberSuffix: [A-Za-z_][A-Za-z0-9_]*) | ε )
         //   LineComment:  '//' .* ( '\n' | EOF )
+        //   DocLineComment:  '///' .* ( '\n' | EOF )
         //   BlockComment: '/*' .* '*/'   (with BlockCommentStar substate)
+        //   DocBlockComment: '/** */' .* '*/' 
         //   Operator: length-1 or length-2 operator
         //
         // Error tolerant: bad input emits a diagnostic and is skipped / marked Invalid.

@@ -2,7 +2,7 @@ func max(num: ...) -> u32 {
     if a > b { a } else { b }
 }
 
-func max(a: u32, b: 32) -> u32 {
+func max(a: u32, b: u32) -> u32 {
     if a > b { a } else { b }
 }
 
