@@ -2,244 +2,283 @@
 #define CORA_AST_AST_H
 
 #include <Cora/AST/Node.h>
+#include <Cora/Core/SourceLocation.h>
+#include <Cora/Diag/DiagnosticCodes.h>
+#include <Cora/Lexer/Token.h>
+#include <Cora/Lexer/TokenPool.h>
 
-#include <span>
+#include <cstddef>
+#include <cstdint>
+#include <iosfwd>
 #include <string>
+#include <string_view>
+#include <utility>
+#include <vector>
 
 namespace cora::ast
 {
 
-    // left(ast, id)
-    // right(ast, id)
-
-    struct AST
+    // -----------------------------------------------------------------------
+    // NodeList — structure-of-arrays node storage
+    //
+    // This is Cora's equivalent of Zig's `Ast.NodeList = MultiArrayList(Node)`.
+    // Tags, main tokens and payloads live in three independent contiguous
+    // arrays. The parser can scan tags linearly without pulling 20-byte nodes
+    // through the cache, and the AST stays compact.
+    // -----------------------------------------------------------------------
+    class NodeList final
     {
-        // -------- fundamental index types ----------------------------------------
-        using NIndex = Node::NIndex; // node reference
-        using TIndex = Node::TIndex; // token reference
-        using EIndex = Node::EIndex; // reference into extras
-
+    public:
+        using NIndex = Node::NIndex;
+        using TIndex = Node::TIndex;
+        using EIndex = Node::EIndex;
         using Tag = Node::Tag;
-        using Node = ast::Node;
+        using Data = Node::Data;
 
-        // ----------- Storage ------------
-        std::vector<Node> nodes;
-        std::vector<uint32_t> extras;
-        std::vector<Token> tokens;
-        // std::vector<Diagnostic> errors;
-
-        // -------- Extra-data helpers ---------------------------------------------
-
-        EIndex addIndexList(std::span<const NIndex> list)
+        [[nodiscard]] std::size_t size() const noexcept { return m_tags.size(); }
+        [[nodiscard]] bool empty() const noexcept { return m_tags.empty(); }
+        [[nodiscard]] std::size_t capacity() const noexcept
         {
-            EIndex at = static_cast<EIndex>(extras.size());
-            extras.insert(extras.end(), list.begin(), list.end());
-            return at;
+            return m_tags.capacity();
+        }
+        void reserve(std::size_t capacity)
+        {
+            m_tags.reserve(capacity);
+            m_main_tokens.reserve(capacity);
+            m_data.reserve(capacity);
+        }
+        void clear() noexcept
+        {
+            m_tags.clear();
+            m_main_tokens.clear();
+            m_data.clear();
         }
 
-        EIndex addTokenList(std::span<const TIndex> list)
+        NIndex add(Tag tag, TIndex main_token, const Data &data)
         {
-            EIndex at = static_cast<EIndex>(extras.size());
-            extras.insert(extras.end(), list.begin(), list.end());
-            return at;
+            const NIndex index = static_cast<NIndex>(m_tags.size());
+            m_tags.push_back(tag);
+            m_main_tokens.push_back(main_token);
+            m_data.push_back(data);
+            return index;
         }
 
-        std::span<const NIndex> getIndexList(EIndex at, uint32_t n) const
+        [[nodiscard]] Tag tag(NIndex index) const noexcept
         {
-            return {reinterpret_cast<const NIndex *>(extras.data() + at), n};
+            return m_tags[index];
+        }
+        [[nodiscard]] TIndex mainToken(NIndex index) const noexcept
+        {
+            return m_main_tokens[index];
+        }
+        [[nodiscard]] const Data &data(NIndex index) const noexcept
+        {
+            return m_data[index];
+        }
+        void setData(NIndex index, const Data &data) noexcept
+        {
+            m_data[index] = data;
         }
 
-        std::span<const TIndex> getTokenList(EIndex at, uint32_t n) const
+        [[nodiscard]] Node operator[](NIndex index) const noexcept
         {
-            return {reinterpret_cast<const TIndex *>(extras.data() + at), n};
-        };
-
-        // -------- Node construction ----------------------------------------------
-        NIndex addNode(Node::Tag t, TIndex main_tok)
-        {
-            NIndex i = static_cast<NIndex>(nodes.size());
-            nodes.push_back(Node{});
-            nodes[i].tag = t;
-            nodes[i].token = main_tok;
-            return i;
+            Node node{};
+            node.tag = m_tags[index];
+            node.main_token = m_main_tokens[index];
+            node.data = m_data[index];
+            return node;
         }
 
-        NIndex makeBlock(std::vector<NIndex> stmts)
+        [[nodiscard]] const std::vector<Tag> &tagColumn() const noexcept
         {
-            NIndex i = addNode(Node::Tag::Block, 0);
-            nodes[i].data.block.stmts_extra = addIndexList(stmts);
-            nodes[i].data.block.stmt_count = static_cast<uint32_t>(stmts.size());
-            return i;
+            return m_tags;
+        }
+        [[nodiscard]] const std::vector<TIndex> &mainTokenColumn() const noexcept
+        {
+            return m_main_tokens;
+        }
+        [[nodiscard]] const std::vector<Data> &dataColumn() const noexcept
+        {
+            return m_data;
         }
 
-        NIndex makeBinary(NIndex lhs, TIndex op, NIndex rhs)
-        {
-            NIndex i = addNode(Node::Tag::Binary, op);
-            nodes[i].data.binary = {lhs, rhs};
-            return i;
-        }
-        NIndex makeAssign(NIndex lhs, TIndex op, NIndex rhs)
-        {
-            NIndex i = addNode(Node::Tag::Assign, op);
-            nodes[i].data.binary = {lhs, rhs};
-            return i;
-        }
-        NIndex makeCall(NIndex callee, std::vector<NIndex> args, TIndex lp)
-        {
-            NIndex i = addNode(Node::Tag::Call, lp);
-            nodes[i].data.call = {callee, addIndexList(args),
-                                  static_cast<uint32_t>(args.size())};
-            return i;
-        }
-        NIndex makeIf(NIndex cond, NIndex then_body, NIndex else_body)
-        {
-            if (else_body == Node::NNull)
-            {
-                NIndex i = addNode(Node::Tag::IfSimple, 0);
-                nodes[i].data.if_simple = {cond, then_body};
-                return i;
-            }
-            NIndex i = addNode(Node::Tag::IfFull, 0);
-            nodes[i].data.if_full = {cond, then_body, else_body};
-            return i;
-        }
-        NIndex makeFn(TIndex name_tok, std::vector<TIndex> params, NIndex body)
-        {
-            NIndex i = addNode(Node::Tag::FnDecl, name_tok);
-            nodes[i].data.fn_decl = {addTokenList(params),
-                                     static_cast<uint32_t>(params.size()), body};
-            return i;
-        }
-        NIndex makeLet(TIndex name_tok, NIndex init, bool is_const)
-        {
-            NIndex i = addNode(is_const ? Node::Tag::ConstDecl : Node::Tag::LetDecl, name_tok);
-            nodes[i].data.let_decl.init = init;
-            return i;
-        }
+    private:
+        std::vector<Tag> m_tags;
+        std::vector<TIndex> m_main_tokens;
+        std::vector<Data> m_data;
+    };
 
-        // -------- Range computation ----------------------------------------------
-        // Find the byte range spanned by a subtree. In Zig this is `nodeToToken`
-        // precomputed as a side table for O(1); here we recurse for clarity.
-        std::pair<uint32_t, uint32_t> rangeOf(NIndex idx) const
+    // -----------------------------------------------------------------------
+    // Parse diagnostics
+    // -----------------------------------------------------------------------
+    struct ParseError
+    {
+        diag::Severity severity = diag::Severity::Error;
+        diag::DiagID id = diag::DiagID::err_expected_token;
+        core::SourceSpan span{};
+        std::string message;
+    };
+
+    // -----------------------------------------------------------------------
+    // Top-level declaration range
+    //
+    // Declarations are parsed contiguously. Storing the node/extra/token/byte
+    // ranges lets incremental parsing reuse an entire top-level declaration
+    // without walking or cloning it blindly.
+    // -----------------------------------------------------------------------
+    struct DeclInfo
+    {
+        Node::NIndex node = Node::NNull;
+        Node::NIndex node_begin = Node::NNull;
+        Node::NIndex node_end = Node::NNull; // exclusive
+        Node::EIndex extra_begin = Node::ENull;
+        Node::EIndex extra_end = Node::ENull; // exclusive
+        Node::TIndex first_token = Node::TNull;
+        Node::TIndex last_token = Node::TNull;
+        std::uint32_t start_offset = 0;
+        std::uint32_t end_offset = 0;
+    };
+
+    /// Non-owning view of an extra_data list.
+    struct IndexList
+    {
+        const Node::NIndex *items = nullptr;
+        std::size_t count = 0;
+
+        [[nodiscard]] bool empty() const noexcept { return count == 0; }
+        [[nodiscard]] std::size_t size() const noexcept { return count; }
+        [[nodiscard]] const Node::NIndex *begin() const noexcept { return items; }
+        [[nodiscard]] const Node::NIndex *end() const noexcept
         {
-            if (idx == Node::NNull)
-                return {0, 0};
-            const Node &n = nodes[idx];
-            switch (n.tag)
-            {
-            case Node::Tag::Block:
-            {
-                if (n.data.block.stmt_count == 0)
-                    return {0, 0};
-                auto stmts = getIndexList(n.data.block.stmts_extra,
-                                          n.data.block.stmt_count);
-                auto lo = rangeOf(stmts.front());
-                auto hi = rangeOf(stmts.back());
-                return {lo.first, hi.second};
-            }
-            case Node::Tag::Binary:
-            case Node::Tag::Assign:
-            {
-                auto lo = rangeOf(n.data.binary.lhs);
-                auto hi = rangeOf(n.data.binary.rhs);
-                return {lo.first, hi.second};
-            }
-            case Node::Tag::IfSimple:
-            {
-                auto c = rangeOf(n.data.if_simple.cond);
-                auto t = rangeOf(n.data.if_simple.then_body);
-                return {c.first, t.second};
-            }
-            case Node::Tag::IfFull:
-            {
-                auto c = rangeOf(n.data.if_full.cond);
-                auto e = rangeOf(n.data.if_full.else_body);
-                return {c.first, e.second};
-            }
-            case Node::Tag::Call:
-            {
-                auto c = rangeOf(n.data.call.callee);
-                const Token &close = tokens.back(); // approximation
-                return {c.first, close.loc.end};
-            }
-            case Node::Tag::Identifier:
-            case Node::Tag::Number:
-            case Node::Tag::String:
-            case Node::Tag::BoolLit:
-            case Node::Tag::NullLit:
-            {
-                const Token &t = tokens[n.token];
-                return {t.loc.start, t.loc.end};
-            }
-            default:
-            {
-                const Token &t = tokens[n.token];
-                return {t.loc.start, t.loc.end};
-            }
-            }
+            return items == nullptr ? nullptr : items + count;
         }
-
-        // -------- Debug dump ------------------------------------------------------
-        void dump(std::ostream &os) const
+        [[nodiscard]] Node::NIndex operator[](std::size_t index) const noexcept
         {
-            for (NIndex i = 1; i < nodes.size(); ++i)
-            {
-                const Node &n = nodes[i];
-                os << "[" << i << "] " << tagName(n.tag)
-                   << "  tok=" << n.token;
-                switch (n.tag)
-                {
-                case Node::Tag::Binary:
-                    os << "  lhs=" << n.data.binary.lhs
-                       << "  rhs=" << n.data.binary.rhs;
-                    break;
-                case Node::Tag::Assign:
-                    os << "  lhs=" << n.data.binary.lhs
-                       << "  rhs=" << n.data.binary.rhs;
-                    break;
-                case Node::Tag::Call:
-                    os << "  callee=" << n.data.call.callee
-                       << "  argc=" << n.data.call.arg_count;
-                    break;
-                case Node::Tag::Block:
-                    os << "  stmt_count=" << n.data.block.stmt_count;
-                    break;
-                case Node::Tag::IfSimple:
-                    os << "  cond=" << n.data.if_simple.cond
-                       << "  then=" << n.data.if_simple.then_body;
-                    break;
-
-                case Node::Tag::IfFull:
-                    os << "  cond=" << n.data.if_full.cond
-                       << "  then=" << n.data.if_full.then_body
-                       << "  else=" << n.data.if_full.else_body;
-                    break;
-                case Node::Tag::While:
-                    os << "  cond=" << n.data.while_stmt.cond
-                       << "  body=" << n.data.while_stmt.body;
-                    break;
-                case Node::Tag::LetDecl:
-                case Node::Tag::ConstDecl:
-                    os << "  init=" << n.data.let_decl.init;
-                    break;
-                case Node::Tag::Return:
-                    os << "  value=" << n.data.ret_value;
-                    break;
-                case Node::Tag::FnDecl:
-                    os << "  params=" << n.data.fn_decl.param_count
-                       << "  body=" << n.data.fn_decl.body;
-                    break;
-                case Node::Tag::Paren:
-                case Node::Tag::ExprStmt:
-                    os << "  inner=" << n.data.inner;
-                    break;
-                default:
-                    break;
-                }
-                os << "\n";
-            }
+            return items[index];
         }
     };
 
+    // -----------------------------------------------------------------------
+    // AST
+    // -----------------------------------------------------------------------
+    struct AST
+    {
+        using NIndex = Node::NIndex;
+        using TIndex = Node::TIndex;
+        using EIndex = Node::EIndex;
+        using Tag = Node::Tag;
+        using Node = ast::Node;
+
+        static constexpr NIndex NNull = Node::NNull;
+        static constexpr EIndex ENull = Node::ENull;
+        static constexpr TIndex TNull = Node::TNull;
+
+        AST();
+        AST(const AST &) = default;
+        AST(AST &&) noexcept = default;
+        AST &operator=(const AST &) = default;
+        AST &operator=(AST &&) noexcept = default;
+        ~AST() = default;
+
+        // -------- Storage ----------------------------------------------------
+        NodeList nodes;
+        std::vector<NIndex> extra_data{ENull};
+        lexer::TokenPool tokens;
+        std::string source;
+        core::FileID file_id = core::INVALID_FILE_ID;
+
+        NIndex root = NNull;
+        std::vector<ParseError> errors;
+        std::vector<DeclInfo> decls;
+
+        // Side tables for O(1) source spans. They are kept parallel to the
+        // node arrays and survive incremental subtree copies.
+        std::vector<TIndex> node_first_token;
+        std::vector<TIndex> node_last_token;
+
+        void clear();
+        void reserve(std::size_t node_capacity,
+                     std::size_t extra_capacity = 0,
+                     std::size_t token_capacity = 0);
+
+        // -------- Node construction -----------------------------------------
+        NIndex addNode(Tag tag, TIndex main_token = TNull);
+        NIndex addNode(Tag tag, TIndex main_token, const Node::Data &data);
+        NIndex addNode(Tag tag, TIndex main_token, const Node::Data &data,
+                       TIndex first_token, TIndex last_token);
+
+        void setNodeData(NIndex index, const Node::Data &data);
+        void setNodeRange(NIndex index, TIndex first_token, TIndex last_token);
+
+        [[nodiscard]] std::size_t nodeCount() const noexcept
+        {
+            return nodes.size();
+        }
+        [[nodiscard]] Tag tag(NIndex index) const noexcept
+        {
+            return nodes.tag(index);
+        }
+        [[nodiscard]] TIndex mainToken(NIndex index) const noexcept
+        {
+            return nodes.mainToken(index);
+        }
+        [[nodiscard]] const Node::Data &data(NIndex index) const noexcept
+        {
+            return nodes.data(index);
+        }
+        [[nodiscard]] Node node(NIndex index) const noexcept
+        {
+            return nodes[index];
+        }
+        [[nodiscard]] TIndex firstToken(NIndex index) const noexcept;
+        [[nodiscard]] TIndex lastToken(NIndex index) const noexcept;
+
+        // -------- Extra data -------------------------------------------------
+        EIndex addExtra(const NIndex *items, std::size_t count);
+        EIndex addExtra(const std::vector<NIndex> &items);
+        [[nodiscard]] IndexList extra(EIndex at, std::uint32_t count) const;
+
+        /// Child node of a Node::Tag::Param.
+        [[nodiscard]] NIndex paramType(NIndex param) const noexcept;
+        [[nodiscard]] NIndex paramDefault(NIndex param) const noexcept;
+
+        /// Parameters and return type of a FnDecl / TypeFn.
+        ///
+        /// The return type is stored as the final entry of the parameter list;
+        /// this keeps the node payload at 12 bytes (Zig's limit) while still
+        /// supporting both a body and a return type.
+        [[nodiscard]] IndexList parameters(NIndex fn) const noexcept;
+        [[nodiscard]] NIndex returnType(NIndex fn) const noexcept;
+
+        // -------- Tokens / source -------------------------------------------
+        void copyTokens(const lexer::TokenPool &pool);
+        [[nodiscard]] std::size_t contentTokenCount() const noexcept;
+        [[nodiscard]] Token token(TIndex index) const;
+        [[nodiscard]] std::string_view tokenText(TIndex index) const;
+        [[nodiscard]] core::SourceSpan tokenSpan(TIndex index) const;
+        [[nodiscard]] core::SourceSpan span(NIndex index) const;
+
+        // -------- Incremental support ---------------------------------------
+        /// Deep-copy `decl` from `src` into the end of this AST.
+        ///
+        /// Node references, extra-data references and token references are
+        /// rebased by the current storage offsets plus the supplied deltas.
+        /// The returned DeclInfo describes the copied range in this AST.
+        DeclInfo appendDeclaration(const AST &src, const DeclInfo &decl,
+                                   std::int64_t token_delta,
+                                   std::int64_t byte_delta);
+
+        void appendError(const ParseError &error) { errors.push_back(error); }
+
+        // -------- Queries / debugging ---------------------------------------
+        [[nodiscard]] bool hasErrors() const noexcept { return !errors.empty(); }
+        [[nodiscard]] std::size_t errorCount() const noexcept
+        {
+            return errors.size();
+        }
+        void dump(std::ostream &out) const;
+    };
+
 } // namespace cora::ast
-#endif
+
+#endif // CORA_AST_AST_H

@@ -577,6 +577,7 @@ namespace cora::lexer
         case '~': return make(Token::Tag::T_BITNOT, 1);
         case ':':
             if (byte(1) == ':') return make(Token::Tag::T_COLONCOLON, 2);
+            if (byte(1) == '=') return make(Token::Tag::T_COLONEQ, 2);
             return make(Token::Tag::T_COLON, 1);
         case '.':
             if (byte(1) == '=' && byte(2) == '=')

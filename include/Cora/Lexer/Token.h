@@ -21,6 +21,7 @@
     F(T_COMMA, ",")       \
     F(T_SEMI, ";")        \
     F(T_COLON, ":")       \
+    F(T_COLONEQ, ":=")    \
     F(T_QUESTION, "?")    \
     F(T_COLONCOLON, "::") \
     F(T_DOT, ".")         \

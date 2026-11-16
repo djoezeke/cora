@@ -1,221 +1,222 @@
-#ifndef CORA_AST_NODES_H
-#define CORA_AST_NODES_H
+#ifndef CORA_AST_NODE_H
+#define CORA_AST_NODE_H
 
 #include <cstdint>
 
-#define NODES_EXPRESSION
+// ---------------------------------------------------------------------------
+// Cora AST node
+//
+// The layout deliberately mirrors Zig's AST node:
+//
+//     struct Node {
+//         Tag tag;
+//         TokenIndex main_token;
+//         Data data;          // 12-byte payload union
+//     };
+//
+// Nodes are stored in a structure-of-arrays `NodeList` (tag/main_token/data
+// columns), and variable-sized payloads live in a separate `extra_data` array.
+// A node is therefore only 20 bytes and the parser can scan just the tag
+// column without touching payloads.
+// ---------------------------------------------------------------------------
 
-#define NODES_STATEMENT
+#define CORA_AST_NODE_TAGS(X) \
+    X(Root)                   \
+    X(ImportDecl)             \
+    X(StructDecl)             \
+    X(FieldDecl)              \
+    X(FnDecl)                 \
+    X(Param)                  \
+    X(LetDecl)                \
+    X(ConstDecl)              \
+    X(TypeDecl)               \
+    X(Block)                  \
+    X(ExprStmt)               \
+    X(IfSimple)               \
+    X(IfFull)                 \
+    X(While)                  \
+    X(ForC)                   \
+    X(ForRange)               \
+    X(Return)                 \
+    X(Break)                  \
+    X(Continue)               \
+    X(Defer)                  \
+    X(Identifier)             \
+    X(IntLit)                 \
+    X(FloatLit)               \
+    X(StringLit)              \
+    X(CharLit)                \
+    X(BoolLit)                \
+    X(NullLit)                \
+    X(Unary)                  \
+    X(Binary)                 \
+    X(Assign)                 \
+    X(Call)                   \
+    X(FieldAccess)            \
+    X(IndexExpr)              \
+    X(ArrayInit)              \
+    X(StructInit)             \
+    X(Paren)                  \
+    X(TypeName)               \
+    X(TypeArray)              \
+    X(TypePointer)            \
+    X(TypeFn)                 \
+    X(Malformed)
 
 namespace cora::ast
 {
 
-    // -------- Node: 20 bytes, tag + main_token + 12-byte union ---------------
     struct Node
     {
-        // -------- fundamental index types ----------------------------------------
-
-        using NIndex = uint32_t; // node reference
-        using TIndex = uint32_t; // token reference
-        using EIndex = uint32_t; // reference into extra_data
+        // -------- fundamental index types ------------------------------------
+        using NIndex = std::uint32_t; // node reference
+        using TIndex = std::uint32_t; // token reference
+        using EIndex = std::uint32_t; // reference into extra_data
 
         static constexpr NIndex NNull = 0; // "no node"
         static constexpr EIndex ENull = 0; // "empty list"
+        static constexpr TIndex TNull = UINT32_MAX; // "no token"
 
-        enum class Tag : uint8_t
+        enum class Tag : std::uint8_t
         {
-#define F()
-
-            Root,
-
-            // Statements
-            Block,
-            ExprStmt,
-            LetDecl,
-            ConstDecl,
-            IfSimple,
-            IfFull,
-            While,
-            Return,
-            Break,
-            Continue,
-            FnDecl,
-
-            // Expressions
-            Identifier,
-            Number,
-            String,
-            BoolLit,
-            NullLit,
-            Unary,
-            Binary,
-            Assign,
-            Call,
-            FieldAccess,
-            IndexExpr,
-            ArrayInit,
-            Paren,
-#undef F
+#define CORA_AST_TAG_ENUM(name) name,
+            CORA_AST_NODE_TAGS(CORA_AST_TAG_ENUM)
+#undef CORA_AST_TAG_ENUM
+                Count
         };
 
+        // -------- Node payload ------------------------------------------------
+        //
+        // Every member fits in 12 bytes. Leaf nodes only use `main_token`.
+        // Layouts are intentionally generic where Zig uses extra_data:
+        // lists of child node indices are stored in `AST::extra_data`.
         union Data
         {
-            // Unary: -expr, !expr
-            NIndex unary_operand;
+            NIndex lhs;
+            NIndex rhs;
 
-            // Binary / Assign: lhs op rhs (op = main_token)
             struct
             {
                 NIndex lhs;
                 NIndex rhs;
-            } binary;
+            } node_and_node;
 
-            // Call: callee(args...)    open paren = main_token
             struct
             {
-                NIndex callee;
-                EIndex args_extra;
-                uint32_t arg_count;
-            } call;
+                NIndex lhs;
+                TIndex rhs;
+            } node_and_token;
 
-            // Field access: base.field
             struct
             {
-                NIndex base;
-                TIndex field_tok;
-            } field;
+                EIndex at;
+                std::uint32_t count;
+            } extra_data;
 
-            // NIndex expression: base[index]
+            // LetDecl / ConstDecl / FieldDecl: optional type + optional init.
             struct
             {
-                NIndex base;
-                NIndex idx;
-            } index_expr;
+                NIndex type;
+                NIndex init;
+            } let_decl;
 
-            // Block: { stmts_extra, count }
-            struct
-            {
-                EIndex stmts_extra;
-                uint32_t stmt_count;
-            } block;
-
-            // If: cond/then/(else)
+            // If / While: condition + body.
             struct
             {
                 NIndex cond;
                 NIndex then_body;
-            } if_simple;
+            } cond_then;
+
+            // IfFull: condition + then body + else body.
             struct
             {
                 NIndex cond;
                 NIndex then_body;
                 NIndex else_body;
-            } if_full;
+            } cond_then_else;
 
-            // While: cond / body
+            // Call: callee + arguments in extra_data.
             struct
             {
-                NIndex cond;
-                NIndex body;
-            } while_stmt;
+                NIndex callee;
+                EIndex args;
+                std::uint32_t arg_count;
+            } call;
 
-            // LetDecl / ConstDecl: name = main_token, init = opt
+            // StructInit: type + [name_token, value_node] pairs in extra_data.
             struct
             {
-                NIndex init;
-            } let_decl;
+                NIndex type;
+                EIndex fields;
+                std::uint32_t field_count;
+            } struct_init;
 
-            // Return: optional value (Null if void)
-            NIndex ret_value;
-
-            // FnDecl: name = main_token; params in extra; body
+            // FnDecl / TypeFn: parameters in extra_data + body/return type.
             struct
             {
-                EIndex params_extra;
-                uint32_t param_count;
+                EIndex params;
+                std::uint32_t param_count;
                 NIndex body;
             } fn_decl;
 
-            // ArrayInit: [a, b, c]
+            // ForC: [init, condition, step] in extra_data + loop body.
             struct
             {
-                EIndex elems_extra;
-                uint32_t elem_count;
-            } array_init;
+                EIndex parts;
+                std::uint32_t part_count;
+                NIndex body;
+            } for_c;
 
-            EIndex block_stmts;
+            // ForRange: binding (or NNull), iterable expression, loop body.
+            struct
+            {
+                NIndex binding;
+                NIndex iterable;
+                NIndex body;
+            } for_range;
 
-            // Paren / ExprStmt: inner expr
-            NIndex inner;
+            // FieldAccess: base expression + field token.
+            struct
+            {
+                NIndex base;
+                TIndex field;
+            } field_access;
+
+            // Param: type + optional default value.
+            struct
+            {
+                NIndex type;
+                NIndex default_value;
+            } param;
+
+            std::uint32_t error;
         };
 
-        Tag tag;
-        // (3 bytes padding)
-        TIndex token;
-        Data data;
+        Tag tag = Tag::Malformed;
+        // (3 bytes tail padding)
+        TIndex main_token = TNull;
+        Data data{};
     };
 
-    static const char *tagName(Node::Tag t)
-    {
-#define F()
+    static_assert(sizeof(Node) <= 24, "AST node must stay compact");
 
-        switch (t)
+    [[nodiscard]] inline const char *tagName(Node::Tag tag) noexcept
+    {
+        switch (tag)
         {
-        case Node::Tag::Root:
-            return "Root";
-        case Node::Tag::Block:
-            return "Block";
-        case Node::Tag::ExprStmt:
-            return "ExprStmt";
-        case Node::Tag::LetDecl:
-            return "LetDecl";
-        case Node::Tag::ConstDecl:
-            return "ConstDecl";
-        case Node::Tag::IfSimple:
-            return "IfSimple";
-        case Node::Tag::IfFull:
-            return "IfFull";
-        case Node::Tag::While:
-            return "While";
-        case Node::Tag::Return:
-            return "Return";
-        case Node::Tag::Break:
-            return "Break";
-        case Node::Tag::Continue:
-            return "Continue";
-        case Node::Tag::FnDecl:
-            return "FnDecl";
-        case Node::Tag::Identifier:
-            return "Identifier";
-        case Node::Tag::Number:
-            return "Number";
-        case Node::Tag::String:
-            return "String";
-        case Node::Tag::BoolLit:
-            return "BoolLit";
-        case Node::Tag::NullLit:
-            return "NullLit";
-        case Node::Tag::Unary:
-            return "Unary";
-        case Node::Tag::Binary:
-            return "Binary";
-        case Node::Tag::Assign:
-            return "Assign";
-        case Node::Tag::Call:
-            return "Call";
-        case Node::Tag::FieldAccess:
-            return "FieldAccess";
-        case Node::Tag::IndexExpr:
-            return "IndexExpr";
-        case Node::Tag::ArrayInit:
-            return "ArrayInit";
-        case Node::Tag::Paren:
-            return "Paren";
+#define CORA_AST_TAG_CASE(name) \
+    case Node::Tag::name:       \
+        return #name;
+            CORA_AST_NODE_TAGS(CORA_AST_TAG_CASE)
+#undef CORA_AST_TAG_CASE
+        case Node::Tag::Count:
+            return "Count";
         }
         return "?";
-
-#undef F
     }
-}
 
-#endif // CORA_AST_NODES_H
+} // namespace cora::ast
+
+#undef CORA_AST_NODE_TAGS
+
+#endif // CORA_AST_NODE_H

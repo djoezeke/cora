@@ -123,4 +123,40 @@ endif()
 
 add_test(NAME CoraLexerTests COMMAND CoraLexerTests)
 
+add_executable(CoraParserTests
+    Cora/Parser/Parser.test.cpp
+    Cora/Parser/AST.test.cpp
+    Cora/Parser/IncrementalParser.test.cpp
+)
+
+target_include_directories(CoraParserTests
+    PRIVATE
+        ${PROJECT_SOURCE_DIR}/include
+)
+
+target_link_libraries(CoraParserTests
+    PRIVATE
+        CoraParser
+        CoraLexer
+        CoraDiag
+        Catch2::Catch2WithMain
+)
+
+target_compile_features(CoraParserTests PRIVATE cxx_std_17)
+target_compile_definitions(CoraParserTests PRIVATE
+    CORA_SOURCE_DIR="${PROJECT_SOURCE_DIR}"
+)
+
+if (MSVC)
+    target_compile_options(CoraParserTests PRIVATE /W4 /permissive-)
+else()
+    target_compile_options(CoraParserTests PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+
+if (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    target_compile_options(CoraParserTests PRIVATE -Wno-c2y-extensions)
+endif()
+
+add_test(NAME CoraParserTests COMMAND CoraParserTests)
+
 # ===================================================================================

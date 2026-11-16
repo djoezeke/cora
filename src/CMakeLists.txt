@@ -47,6 +47,33 @@ else()
     target_compile_options(CoraLexer PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 
+# ---------------------------------------------------------------------------
+# Parser: the Zig-style AST plus the hand-written recursive-descent parser.
+#
+# Kept as its own target while the legacy AIR/CIR codegen is migrated to the
+# new AST, so the front-end can be built and tested in isolation.
+# ---------------------------------------------------------------------------
+set(CORA_PARSER_SOURCES
+    Cora/AST/AST.cpp
+    Cora/Parser/Parser.cpp
+)
+
+add_library(CoraParser STATIC ${CORA_PARSER_SOURCES})
+
+target_include_directories(CoraParser
+    PUBLIC
+        ${PROJECT_SOURCE_DIR}/include
+)
+
+target_compile_features(CoraParser PUBLIC cxx_std_17)
+target_link_libraries(CoraParser PUBLIC CoraLexer CoraDiag)
+
+if (MSVC)
+    target_compile_options(CoraParser PRIVATE /W4 /permissive-)
+else()
+    target_compile_options(CoraParser PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+
 set(CORA_LIBRARY_SOURCES
     Cora/AIR/AIR.cpp
     Cora/AST/AST.cpp

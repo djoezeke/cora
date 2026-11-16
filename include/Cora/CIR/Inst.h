@@ -1,181 +1,197 @@
-/**
- * CIR — untyped, flat, index-based; one Body per function.
- * Purpose - Type inference, trait resolution, and incremental building.
- * generated after initial parsing, macro expansion, and name resolution.
- */
 #ifndef CORA_CIR_INST_H
 #define CORA_CIR_INST_H
 
+#include <Cora/Core/SourceLocation.h>
+#include <Cora/Lexer/Token.h>
+
+#include <cstddef>
 #include <cstdint>
+#include <string>
+#include <vector>
 
 namespace cora::cir
 {
-
-    using IIndex = uint32_t; // CIR Instruction reference
-    using EIndex = uint32_t; // extra data reference
-    using BIndex = uint32_t; // body reference
+    /// CIR uses 1-based instruction references. Index 0 is the null value.
+    using IIndex = std::uint32_t;
+    using EIndex = std::uint32_t;
+    using BIndex = std::uint32_t;
+    using TIndex = std::uint32_t;
 
     static constexpr IIndex INull = 0;
     static constexpr EIndex ENull = 0;
-    static constexpr BIndex BNull = 0xFFFFFFFF;
+    static constexpr BIndex BNull = 0xFFFFFFFFu;
+    static constexpr TIndex TNull = 0xFFFFFFFFu;
 
-    enum class Tag : uint8_t
-    { // Control flow
+    /// Untyped, structured intermediate representation.
+    ///
+    /// Expressions and statements are stored in a flat instruction list and
+    /// refer to children by index. Type syntax is kept in a small side table
+    /// (`TypeRefInfo`) so Sema can build the real type graph without depending
+    /// on AST node indices.
+    enum class Tag : std::uint8_t
+    {
+        Invalid = 0,
+
+        // Declarations
+        StructDecl,
+        FnDecl,
+        LetDecl,
+        TypeAlias,
+        Import,
+
+        // Statements
+        Block,
+        ExprStmt,
+        If,
+        While,
+        ForC,
+        ForRange,
         Return,
-        ReturnVoid,
         Break,
-        BreakVoid,
-        Block,  // body_len payload; children follow inline
-        CondBr, // cond, then_block, else_block (all Block insts)
-        // Arithmetic / comparison
-        Add,
-        Sub,
-        Mul,
-        Div,
-        Mod,
-        CmpEq,
-        CmpNe,
-        CmpLt,
-        CmpLtEq,
-        CmpGt,
-        CmpGtEq,
-        // Unary
-        Neg,
-        Not,
-        // Values
-        Int,
-        Float,
-        Str,
-        Bool,
+        Continue,
+        Defer,
+
+        // Expressions
+        Identifier,
+        IntLit,
+        FloatLit,
+        StringLit,
+        CharLit,
+        BoolLit,
         NullLit,
-        // References
-        Ref,   // name → Sema resolves to local/decl
-        Load,  // deref a Ref
-        Store, // write through a Ref
-        // Aggregates / calls
-        Call,      // callee + args_extra
-        ArrayInit, // elems_extra
-        ElemPtr,   // base + idx
-        FieldPtr,  // base + field token
-        // Declarations (root body only)
-        LetDecl, // name, init
-        FnDecl,  // name, body_idx, params_extra
-        // Error
-        ErrTok, // poisoned; carries err_tag
+        Unary,
+        Binary,
+        Assign,
+        Call,
+        FieldAccess,
+        Index,
+        ArrayInit,
+        StructInit,
+        Paren,
+
+        // Recovery
+        Malformed,
     };
+
+    [[nodiscard]] const char *tagName(Tag tag) noexcept;
 
     struct Inst
     {
-        Tag tag;
-        union
-        {
-            IIndex un; // unary
-            struct
-            {
-                IIndex lhs, rhs;
-            } bin; // binary
-            struct
-            {
-                uint32_t body_len;
-            } block; // body is *inline*
-            struct
-            {
-                IIndex block;
-            } brk; // Break target
-            struct
-            {
-                IIndex cond, then_blk, else_blk;
-            } condbr;
-            struct
-            {
-                IIndex callee;
-                EIndex args;
-            } call;
-            int64_t int_value;
-            double float_value;
-            bool bool_value;
-            uint32_t str_idx;  // into CIR.strings
-            uint32_t name_idx; // into CIR.strings
-            struct
-            {
-                IIndex target;
-            } unary_op; // for Load/Store/Neg/Not
-            struct
-            {
-                IIndex base, idx;
-            } elem;
-            struct
-            {
-                IIndex base;
-                uint32_t field;
-            } field_ptr;
-            struct
-            {
-                uint32_t name;
-                IIndex init;
-            } let_decl;
-            struct
-            {
-                uint32_t name;
-                IIndex body;
-                EIndex params;
-                uint32_t param_count;
-            } fn_decl;
-            uint16_t err_tag;
+        Tag tag = Tag::Invalid;
 
-        } data;
+        /// Four generic operand slots. Their meaning is determined by `tag`.
+        /// a/b/c are generally instruction references; d is a fourth operand.
+        IIndex a = INull;
+        IIndex b = INull;
+        IIndex c = INull;
+        IIndex d = INull;
+
+        /// The operator token for Unary/Binary/Assign.
+        Token::Tag op = Token::Tag::T_EOF;
+
+        /// Literal payloads.
+        std::int64_t int_value = 0;
+        double float_value = 0.0;
+        bool bool_value = false;
+
+        /// Name/field/string index into CIR::strings.
+        std::uint32_t name = TNull;
+
+        /// Type syntax reference into CIR::types.
+        TIndex type_ref = TNull;
+
+        /// Extra list: [count][items...] stored in CIR::extra.
+        EIndex extra = ENull;
+        std::uint32_t extra_count = 0;
+
+        /// Declaration flags / prefix-vs-postfix marker.
+        std::uint32_t flags = 0;
+
+        core::SourceSpan span{};
+    };
+
+    /// Declaration flags.
+    static constexpr std::uint32_t CIR_FLAG_MUTABLE = 1u << 0;
+    static constexpr std::uint32_t CIR_FLAG_CONST = 1u << 1;
+    static constexpr std::uint32_t CIR_FLAG_PUBLIC = 1u << 2;
+    static constexpr std::uint32_t CIR_FLAG_EXTERN = 1u << 3;
+    static constexpr std::uint32_t CIR_FLAG_POSTFIX = 1u << 4;
+    static constexpr std::uint32_t CIR_FLAG_BARE_RETURN = 1u << 5;
+
+    struct Param
+    {
+        std::uint32_t name = TNull;
+        TIndex type_ref = TNull;
+        core::SourceSpan span{};
+    };
+
+    enum class TypeRefKind : std::uint8_t
+    {
+        Named,
+        Array,
+        Pointer,
+        Function,
+    };
+
+    /// Syntactic type reference. Sema interns these into semantic TypeIds.
+    struct TypeRefInfo
+    {
+        TypeRefKind kind = TypeRefKind::Named;
+        std::uint32_t name = TNull; // Named
+        TIndex element = TNull;     // Array/Pointer
+        std::uint64_t length = 0;   // Array
+        std::vector<TIndex> params; // Function parameters
+        TIndex result = TNull;      // Function result
+        core::SourceSpan span{};
     };
 
     struct Body
     {
-        std::vector<Inst> insts;
-        std::vector<uint32_t> extra;
+        std::string name;
+        std::vector<Inst> insts{Inst{}}; // index 0 reserved for INull
+        std::vector<std::uint32_t> extra{ENull};
+        std::vector<Param> params;
+        std::vector<IIndex> roots;
+        BIndex index = BNull;
+        bool is_function = false;
+        bool is_extern = false;
+
+        [[nodiscard]] IIndex add(Inst inst)
+        {
+            const IIndex at = static_cast<IIndex>(insts.size());
+            insts.push_back(inst);
+            return at;
+        }
+
+        [[nodiscard]] EIndex addList(const std::vector<std::uint32_t> &items)
+        {
+            if (items.empty())
+                return ENull;
+            const EIndex at = static_cast<EIndex>(extra.size());
+            extra.push_back(static_cast<std::uint32_t>(items.size()));
+            extra.insert(extra.end(), items.begin(), items.end());
+            return at;
+        }
     };
 
-    static const char *cirTagName(Tag t)
+    /// Non-owning view of an extra list.
+    struct ListView
     {
-        switch (t)
+        const std::uint32_t *items = nullptr;
+        std::size_t count = 0;
+
+        [[nodiscard]] bool empty() const noexcept { return count == 0; }
+        [[nodiscard]] std::size_t size() const noexcept { return count; }
+        [[nodiscard]] const std::uint32_t *begin() const noexcept { return items; }
+        [[nodiscard]] const std::uint32_t *end() const noexcept
         {
-        case Tag::Return:
-            return "Return";
-        case Tag::ReturnVoid:
-            return "ReturnVoid";
-        case Tag::Break:
-            return "Break";
-        case Tag::BreakVoid:
-            return "BreakVoid";
-        case Tag::Block:
-            return "Block";
-        case Tag::CondBr:
-            return "CondBr";
-        case Tag::Add:
-            return "Add";
-        case Tag::Sub:
-            return "Sub";
-        case Tag::Mul:
-            return "Mul";
-        case Tag::Div:
-            return "Div";
-        case Tag::Int:
-            return "Int";
-        case Tag::Ref:
-            return "Ref";
-        case Tag::Load:
-            return "Load";
-        case Tag::Store:
-            return "Store";
-        case Tag::Call:
-            return "Call";
-        case Tag::LetDecl:
-            return "LetDecl";
-        case Tag::FnDecl:
-            return "FnDecl";
-        case Tag::ErrTok:
-            return "ErrTok";
-        default:
-            return "?";
+            return items == nullptr ? nullptr : items + count;
         }
-    }
+        [[nodiscard]] std::uint32_t operator[](std::size_t index) const noexcept
+        {
+            return items[index];
+        }
+    };
 
 } // namespace cora::cir
 
