@@ -24,6 +24,29 @@ else()
     target_compile_options(CoraDiag PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 
+set(CORA_LEXER_SOURCES
+    Cora/Lexer/Interner.cpp
+    Cora/Lexer/Lexer.cpp
+    Cora/Lexer/Token.cpp
+    Cora/Lexer/TokenStream.cpp
+)
+
+add_library(CoraLexer STATIC ${CORA_LEXER_SOURCES})
+
+target_include_directories(CoraLexer
+    PUBLIC
+        ${PROJECT_SOURCE_DIR}/include
+)
+
+target_compile_features(CoraLexer PUBLIC cxx_std_17)
+target_link_libraries(CoraLexer PUBLIC CoraDiag)
+
+if (MSVC)
+    target_compile_options(CoraLexer PRIVATE /W4 /permissive-)
+else()
+    target_compile_options(CoraLexer PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+
 set(CORA_LIBRARY_SOURCES
     Cora/AIR/AIR.cpp
     Cora/AST/AST.cpp
@@ -37,7 +60,7 @@ target_include_directories(Cora
 )
 
 target_compile_features(Cora PUBLIC cxx_std_17)
-target_link_libraries(Cora PUBLIC CoraDiag)
+target_link_libraries(Cora PUBLIC CoraDiag CoraLexer)
 
 if (MSVC)
     target_compile_options(Cora PRIVATE /W4 /permissive-)

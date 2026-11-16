@@ -1,0 +1,129 @@
+// Line Comment
+//! Line Doc Comment
+/** Block Comment **/
+/*! Block Doc Comment **/
+/** Nested /** Block Comment **/ **/
+
+import "std::io::scan";
+import <std::io::scan>;
+
+// Compound Types
+
+// Array
+const a = [1, 2, 3, 4, 5];
+mut a: u32[5] = [1, 2, 3, 4, 5];
+mut a: u32[2][2] = [[1,1],
+                    [2,2]];
+
+// Control Flow
+
+while (true) {
+    println("Hello World");
+}
+
+for (i: u32 = 0; i < 10; i++) {
+    println(i);
+}
+
+for (i: u32 = 0; i < 10; i++) {
+    if (i % 2 == 0) {
+        println(i);
+    }
+}
+
+for (i in [1, 2, 3, 4, 5]) {
+    println(i);
+}
+
+macro max()
+
+type Point = struct {
+    x: u32,
+    y: u32,
+}
+
+struct Point {
+    x: u32,
+    y: u32,
+
+    func new(x: u32, y: u32) -> Point {
+        return Point{x, y};
+    }    
+}
+
+struct Matrix<T, const ROWS: usize, const COLS: usize> {
+    data: [[T; COLS]; ROWS],
+}
+
+struct Point<T> {
+    x: T,
+    y: T,
+
+    func Point<T>(x: T, y: T) -> Point<T> {
+        return Point{x, y};
+    }
+
+    func ~Point<T>() -> void {}
+
+    func new(x: T, y: T) -> Point {
+         return Point{x, y};
+    }    
+}
+
+func max(a: u32, b: u32) -> u32 {
+    if a > b { a } else { b }
+}
+
+func main() -> u32 {
+    const a: Point = Point{x: 2, y: 3};
+    const b: u32 = max(a.x, a.y);   // 3
+    return a.x + a.y;
+}
+
+///////////////////////////////////////////////////////////
+/// Decorator Pattern
+///////////////////////////////////////////////////////////
+
+type Object = func(u32) -> u32;
+
+func LogDecorate(fn: Object) -> Object {
+	return func(n: u32) -> u32 {
+
+		println("Starting the execution with the integer", n);
+		result := fn(n);
+		log.Println("Execution is completed with the result", result);
+
+        return result;
+	}
+}
+
+func Double(n: u32) -> u32 {
+    return n * 2;
+}
+
+func Tripple(n: u32) -> u32 {
+    return n * 3;
+}
+
+LogDouble := LogDecorate(Double);
+LogTripple := LogDecorate(Double);
+
+LogDouble(5);
+LogTripple(5)
+
+
+///////////////////////////////////////////////////////////
+/// Generic Programming
+///////////////////////////////////////////////////////////
+
+func max<T>(nums: ...T) -> T {
+    return a + b;
+}
+
+func add<T>(a: T, b: T) -> T {
+    return a + b;
+}
+
+type array<T, S: u32> = struct {
+    data: T[S]
+}
