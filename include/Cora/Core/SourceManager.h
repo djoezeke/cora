@@ -2,52 +2,102 @@
 #define CORA_CORE_SOURCEMANAGER_H
 
 #include <Cora/Core/SourceFile.h>
-#include <Cora/Core/SourceLocation.h>
+
+#include <fstream>
 #include <memory>
+#include <optional>
+#include <shared_mutex>
+#include <sstream>
 #include <string>
-#include <string_view>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace cora::core
 {
 
-    class SourceManager
+class SourceManager
+{
+public:
+    SourceManager()
     {
-    public:
-        SourceManager() = default;
-        ~SourceManager() = default;
+        // Index 0 is reserved for INVALID_FILE_ID.
+        files_.push_back(nullptr);
+    }
 
-        // Non-copyable, movable
-        SourceManager(const SourceManager &) = delete;
-        SourceManager &operator=(const SourceManager &) = delete;
-        SourceManager(SourceManager &&) noexcept = default;
-        SourceManager &operator=(SourceManager &&) noexcept = default;
+    SourceManager(const SourceManager &) = delete;
+    SourceManager &operator=(const SourceManager &) = delete;
 
-        // ===================================================================
-        // File Management
-        // ===================================================================
+    /// Thread-safe file loading, deduplicated by path.
+    [[nodiscard]] std::optional<FileID> load_file(const std::string &path)
+    {
+        {
+            std::shared_lock read_lock(mutex_);
+            const auto existing = path_to_id_.find(path);
+            if (existing != path_to_id_.end())
+            {
+                return existing->second;
+            }
+        }
 
-        /// Add or retrieve an existing source file from memory.
-        uint32_t addFile(const std::string &path, const std::string &content);
-        uint32_t addSourceFile(const std::string &path, const std::string &content);
+        std::ifstream file(path, std::ios::binary);
+        if (!file.is_open())
+        {
+            return std::nullopt;
+        }
 
-        /// Load a file from the disk into the SourceManager.
-        uint32_t loadFile(const std::string &filePath);
+        std::ostringstream buffer;
+        buffer << file.rdbuf();
+        return add_virtual_file(path, buffer.str());
+    }
 
-        /// Retrieve a file by its unique 1-based or 0-based ID.
-        const SourceFile *getFile(uint32_t id) const;
+    /// Thread-safe registration for in-memory buffers, tests, or a REPL.
+    FileID add_virtual_file(std::string name, std::string content)
+    {
+        std::unique_lock write_lock(mutex_);
 
-        /// Retrieve a file by path or name.
-        const SourceFile *getFile(const std::string &path) const;
+        const auto existing = path_to_id_.find(name);
+        if (existing != path_to_id_.end())
+        {
+            return existing->second;
+        }
 
-        size_t getFileCount() const noexcept { return files.size(); }
-        const std::vector<std::unique_ptr<SourceFile>> &getAllFiles() const noexcept { return files; }
+        const FileID new_id = static_cast<FileID>(files_.size());
+        auto source_file =
+            std::make_unique<SourceFile>(new_id, name, std::move(content));
 
-    public:
-        // Storage collections
-        std::vector<std::unique_ptr<SourceFile>> files;
-    };
+        path_to_id_.emplace(std::move(name), new_id);
+        files_.push_back(std::move(source_file));
+        return new_id;
+    }
+
+    /// Safe to call concurrently from worker threads.
+    [[nodiscard]] const SourceFile *get_file(FileID id) const
+    {
+        std::shared_lock read_lock(mutex_);
+        if (id == INVALID_FILE_ID || id >= files_.size())
+        {
+            return nullptr;
+        }
+        return files_[id].get();
+    }
+
+    /// Resolve the start of a span to a 1-based line and column.
+    [[nodiscard]] std::optional<LineCol> resolve_location(SourceSpan span) const
+    {
+        const SourceFile *file = get_file(span.file_id);
+        if (file == nullptr)
+        {
+            return std::nullopt;
+        }
+        return file->GetLineCol(span.start_offset);
+    }
+
+private:
+    mutable std::shared_mutex mutex_;
+    std::vector<std::unique_ptr<SourceFile>> files_;
+    std::unordered_map<std::string, FileID> path_to_id_;
+};
 
 } // namespace cora::core
 

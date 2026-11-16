@@ -3,56 +3,265 @@
 
 #include <Cora/Core/SourceLocation.h>
 
-// #include "diag/diag_arg.h"
-// #include "diag/diagid.h"
-// #include "diag/fixit.h"
-// #include "diag/span.h"
-
-#include <array>
 #include <cstdint>
+#include <string>
+#include <string_view>
+#include <utility>
+#include <vector>
 
 namespace cora::diag
 {
 
-    inline constexpr std::size_t MaxArgs = 4;
-    inline constexpr std::size_t MaxSpans = 3;
-    inline constexpr std::size_t MaxFixIts = 2;
-    inline constexpr std::size_t MaxChildren = 3;
+using SourceSpan = cora::core::SourceSpan;
 
-    struct LabeledSpan
+/// Severity of a diagnostic. The ordering is intentional: values at or above
+/// `Warning` participate in warning/error accounting.
+enum class Severity : std::uint8_t
+{
+    Ignored,
+    Remark,
+    Note,
+    Help,
+    Warning,
+    Error,
+    Fatal,
+};
+
+[[nodiscard]] constexpr bool is_error_severity(Severity severity) noexcept
+{
+    return severity == Severity::Error || severity == Severity::Fatal;
+}
+
+[[nodiscard]] constexpr bool is_warning_severity(Severity severity) noexcept
+{
+    return severity == Severity::Warning;
+}
+
+[[nodiscard]] constexpr const char *severity_name(Severity severity) noexcept
+{
+    switch (severity)
     {
-        Span span{};
-        const char *label = "";
-        bool primary = false;
-    };
+    case Severity::Ignored:
+        return "ignored";
+    case Severity::Remark:
+        return "remark";
+    case Severity::Note:
+        return "note";
+    case Severity::Help:
+        return "help";
+    case Severity::Warning:
+        return "warning";
+    case Severity::Error:
+        return "error";
+    case Severity::Fatal:
+        return "fatal error";
+    }
+    return "unknown";
+}
 
-    struct SubNote
+/// How a source label is rendered.
+enum class LabelStyle
+{
+    Primary,  ///< Rendered with ^^^
+    Secondary ///< Rendered with ---
+};
+
+[[nodiscard]] constexpr const char *label_style_name(LabelStyle style) noexcept
+{
+    return style == LabelStyle::Primary ? "primary" : "secondary";
+}
+
+/// Whether a machine-applicable fix can be applied automatically.
+enum class Applicability
+{
+    MachineApplicable, ///< Safe to auto-apply (e.g. cora fix / IDE quick-fix)
+    MaybeIncorrect,    ///< Likely right, requires human review
+    HasPlaceholders    ///< Contains template placeholders like `<expr>`
+};
+
+[[nodiscard]] constexpr const char *applicability_name(Applicability applicability) noexcept
+{
+    switch (applicability)
     {
-        DiagnosticLevel level = DiagnosticLevel::Note;
-        SourceLocation loc{};
-        const char *msg = "";
-    };
+    case Applicability::MachineApplicable:
+        return "machine-applicable";
+    case Applicability::MaybeIncorrect:
+        return "maybe-incorrect";
+    case Applicability::HasPlaceholders:
+        return "has-placeholders";
+    }
+    return "unknown";
+}
 
-    struct Diagnostic
+struct Label
+{
+    SourceSpan span{};
+    std::string message;
+    LabelStyle style = LabelStyle::Primary;
+
+    Label() = default;
+    Label(SourceSpan source_span, std::string label_message = {},
+          LabelStyle label_style = LabelStyle::Primary)
+        : span(source_span), message(std::move(label_message)), style(label_style)
     {
-        DiagID id = DiagID::anonymous;
-        DiagnosticLevel level = DiagnosticLevel::Error;
-        SourceLocation loc{};
-        std::uint8_t num_args = 0;
-        std::uint8_t num_spans = 0;
-        std::uint8_t num_fixits = 0;
-        std::uint8_t num_children = 0;
+    }
+};
 
-        const char *raw_message = nullptr; // if set, overrides DiagTable[id].format
-        std::uint32_t raw_message_len = 0;
+struct Suggestion
+{
+    SourceSpan span{};
+    std::string replacement;
+    std::string message;
+    Applicability applicability = Applicability::MachineApplicable;
 
-        std::array<DiagArg, MaxArgs> args{};
-        std::array<LabeledSpan, MaxSpans> spans{};
-        std::array<FixItHint, MaxFixIts> fixits{};
-        std::array<SubNote, MaxChildren> children{};
+    Suggestion() = default;
+    Suggestion(SourceSpan source_span, std::string replacement_text,
+               std::string suggestion_message = {},
+               Applicability suggestion_applicability = Applicability::MachineApplicable)
+        : span(source_span),
+          replacement(std::move(replacement_text)),
+          message(std::move(suggestion_message)),
+          applicability(suggestion_applicability)
+    {
+    }
+};
 
-        Diagnostic(DiagID i, DiagnosticLevel l, SourceLocation s) : id(i), level(l), loc(s) {}
-    };
+/// A fully materialized diagnostic.
+///
+/// `Diagnostic` is a plain value type. It is intentionally independent of the
+/// engine and of any output format so that emitters can be plugged in without
+/// touching the compiler front-end.
+class Diagnostic
+{
+public:
+    Diagnostic() = default;
+    Diagnostic(Severity severity, std::string_view message, std::string_view code = {});
+
+    static Diagnostic error(std::string_view message, std::string_view code = {});
+    static Diagnostic warning(std::string_view message, std::string_view code = {});
+    static Diagnostic remark(std::string_view message, std::string_view code = {});
+    static Diagnostic note(std::string_view message, std::string_view code = {});
+    static Diagnostic help(std::string_view message, std::string_view code = {});
+    static Diagnostic fatal(std::string_view message, std::string_view code = {});
+
+    [[nodiscard]] Severity severity() const noexcept { return severity_; }
+    [[nodiscard]] const std::string &code() const noexcept { return code_; }
+    [[nodiscard]] const std::string &message() const noexcept { return message_; }
+    [[nodiscard]] const std::vector<Label> &labels() const noexcept { return labels_; }
+    [[nodiscard]] const std::vector<std::string> &hints() const noexcept { return hints_; }
+    [[nodiscard]] const std::vector<std::string> &notes() const noexcept { return hints_; }
+    [[nodiscard]] const std::vector<Suggestion> &suggestions() const noexcept
+    {
+        return suggestions_;
+    }
+
+    [[nodiscard]] bool has_code() const noexcept { return !code_.empty(); }
+    [[nodiscard]] bool is_error() const noexcept { return is_error_severity(severity_); }
+    [[nodiscard]] bool is_warning() const noexcept
+    {
+        return is_warning_severity(severity_);
+    }
+
+    /// True when the engine/builder already applied -Werror policy to this
+    /// diagnostic. Directly reported diagnostics start unresolved.
+    [[nodiscard]] bool severity_resolved() const noexcept
+    {
+        return severity_resolved_;
+    }
+    void set_severity_resolved(bool resolved) noexcept
+    {
+        severity_resolved_ = resolved;
+    }
+
+    /// The first primary label, or the first label if no primary label exists.
+    [[nodiscard]] SourceSpan primary_span() const noexcept;
+    [[nodiscard]] SourceSpan span() const noexcept { return span_; }
+    void set_span(SourceSpan span) noexcept { span_ = span; }
+
+    void set_severity(Severity severity) noexcept { severity_ = severity; }
+    void set_code(std::string_view code);
+    void set_message(std::string_view message);
+
+    void add_label(Label label);
+    void add_label(SourceSpan span, std::string_view message = {},
+                   LabelStyle style = LabelStyle::Primary);
+    void add_hint(std::string_view hint);
+    void add_note(std::string_view note) { add_hint(note); }
+    void add_suggestion(Suggestion suggestion);
+    void add_suggestion(SourceSpan span, std::string_view replacement,
+                        std::string_view message = {},
+                        Applicability applicability = Applicability::MachineApplicable);
+
+    void clear();
+
+    Diagnostic &with_code(std::string_view code)
+    {
+        set_code(code);
+        return *this;
+    }
+
+    Diagnostic &with_message(std::string_view message)
+    {
+        set_message(message);
+        return *this;
+    }
+
+    Diagnostic &with_span(SourceSpan span)
+    {
+        set_span(span);
+        return *this;
+    }
+
+    Diagnostic &with_primary(SourceSpan span, std::string_view label_message = {})
+    {
+        add_label(span, label_message, LabelStyle::Primary);
+        return *this;
+    }
+
+    Diagnostic &with_secondary(SourceSpan span, std::string_view label_message = {})
+    {
+        add_label(span, label_message, LabelStyle::Secondary);
+        return *this;
+    }
+
+    Diagnostic &with_label(SourceSpan span, std::string_view label_message = {},
+                           LabelStyle style = LabelStyle::Primary)
+    {
+        add_label(span, label_message, style);
+        return *this;
+    }
+
+    Diagnostic &with_hint(std::string_view hint)
+    {
+        add_hint(hint);
+        return *this;
+    }
+
+    Diagnostic &with_note(std::string_view note)
+    {
+        add_hint(note);
+        return *this;
+    }
+
+    Diagnostic &with_suggestion(
+        SourceSpan span, std::string_view replacement,
+        std::string_view message = {},
+        Applicability applicability = Applicability::MachineApplicable)
+    {
+        add_suggestion(span, replacement, message, applicability);
+        return *this;
+    }
+
+private:
+    Severity severity_ = Severity::Error;
+    bool severity_resolved_ = false;
+    SourceSpan span_{};
+    std::string code_;
+    std::string message_;
+    std::vector<Label> labels_;
+    std::vector<std::string> hints_;
+    std::vector<Suggestion> suggestions_;
+};
 
 } // namespace cora::diag
 

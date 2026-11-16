@@ -168,6 +168,13 @@ comptime type User<T,S> = struct {
     age: S
 }
 
+comptime func User<T,S>() {
+    return struct {
+        id: T,
+        age: S
+    }
+}
+
 const czeke: User<i32,i32> = {id: 1, age:21}
 
 comptime func(u: *User<T,S>) getID() -> T {

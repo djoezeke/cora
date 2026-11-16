@@ -2,64 +2,105 @@
 #define CORA_CORE_SOURCEFILE_H
 
 #include <Cora/Core/SourceLocation.h>
+
+#include <algorithm>
+#include <cstddef>
 #include <cstdint>
+#include <iterator>
+#include <mutex>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace cora::core
 {
 
-    struct SourceFile
+/// Immutable source buffer with a lazily computed, thread-safe line table.
+struct SourceFile
+{
+public:
+    SourceFile(FileID id, std::string path, std::string content)
+        : id_(id), path_(std::move(path)), content_(std::move(content))
     {
-        uint32_t id = 0;            ///< Unique identifier assigned by SourceManager.
-        std::string path;           ///< Canonical path or file name.
-        std::string content;        ///< Full file buffer content.
-        std::vector<uint32_t> line; ///< Line offset table: line[i] is the byte offset where line (i+1) starts.
+    }
 
-        SourceFile(uint32_t id, const std::string &path, const std::string &content);
+    // Non-copyable to prevent accidental duplication of large buffers.
+    SourceFile(const SourceFile &) = delete;
+    SourceFile &operator=(const SourceFile &) = delete;
 
-        /// Accessors
+    [[nodiscard]] FileID GetID() const noexcept { return id_; }
+    [[nodiscard]] std::string_view GetPath() const noexcept { return path_; }
+    [[nodiscard]] std::string_view GetContent() const noexcept
+    {
+        return content_;
+    }
 
-        const std::string &filename() const;
-        const std::string &source() const;
-        uint32_t size() const;
+    /// Map a 0-based byte offset to a 1-based line and column.
+    [[nodiscard]] LineCol GetLineCol(std::uint32_t byte_offset) const
+    {
+        ensure_line_offsets();
 
-        uint32_t getId() const noexcept { return id; }
-        const std::string &getPath() const noexcept { return path; }
-        std::string getFilename() const;
-        const std::string &getContent() const noexcept { return content; }
-        size_t getSize() const noexcept { return content.size(); }
+        const auto it =
+            std::upper_bound(lines_.begin(), lines_.end(), byte_offset);
+        const auto line_index =
+            static_cast<std::size_t>(std::distance(lines_.begin(), it) - 1);
+        const std::uint32_t column_offset = byte_offset - lines_[line_index];
+        return LineCol{static_cast<std::uint32_t>(line_index + 1),
+                       column_offset + 1};
+    }
 
-        uint32_t getLineCount() const noexcept
+    /// Get the text of a 1-based line without its trailing newline / CR.
+    [[nodiscard]] std::string_view GetLineText(std::uint32_t line_number) const
+    {
+        ensure_line_offsets();
+
+        if (line_number == 0 || line_number > lines_.size())
         {
-            return static_cast<uint32_t>(line.size());
+            return {};
         }
 
-        /// Map a 0-based byte offset to a SourceLocation
-        SourceLocation getLocation(uint32_t offset) const;
+        const std::size_t start = lines_[line_number - 1];
+        std::size_t end = (line_number < lines_.size())
+                              ? lines_[line_number]
+                              : content_.size();
 
-        /// Map a range [startOffset, startOffset + length) to a SourceSpan
-        SourceSpan getSpan(uint32_t startOffset, uint32_t length) const;
+        if (end > start && content_[end - 1] == '\n')
+        {
+            --end;
+        }
+        if (end > start && content_[end - 1] == '\r')
+        {
+            --end;
+        }
+        return std::string_view(content_).substr(start, end - start);
+    }
 
-        /// Compute line (1-based) and column (1-based) for an offset
-        void getLineAndColumn(uint32_t offset, uint32_t &outLine, uint32_t &outColumn) const;
+private:
+    void ensure_line_offsets() const
+    {
+        std::call_once(line_init_flag_,
+                       [this]()
+                       {
+                           lines_.push_back(0);
+                           for (std::size_t index = 0; index < content_.size();
+                                ++index)
+                           {
+                               if (content_[index] == '\n')
+                               {
+                                   lines_.push_back(
+                                       static_cast<std::uint32_t>(index + 1));
+                               }
+                           }
+                       });
+    }
 
-        /// Compute 0-based byte offset from line (1-based) and column (1-based)
-        uint32_t getOffset(uint32_t lineNum, uint32_t colNum) const;
-
-        /// Get content of a specific 1-based line (excluding trailing newline / \r)
-        std::string_view getLineContent(uint32_t lineNum) const;
-
-        /// Get a slice of the source content
-        std::string_view getSlice(uint32_t startOffset, uint32_t length) const;
-
-        /// Get a snippet corresponding to a SourceSpan
-        std::string_view getSnippet(const SourceSpan &span) const;
-
-    private:
-        void buildLineTable();
-    };
+    FileID id_ = INVALID_FILE_ID;
+    std::string path_;
+    std::string content_;
+    mutable std::vector<std::uint32_t> lines_;
+    mutable std::once_flag line_init_flag_;
+};
 
 } // namespace cora::core
 

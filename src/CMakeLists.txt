@@ -1,3 +1,29 @@
+set(CORA_DIAG_SOURCES
+    Cora/Diag/Diagnostic.cpp
+    Cora/Diag/DiagnosticBuilder.cpp
+    Cora/Diag/DiagnosticCodes.cpp
+    Cora/Diag/DiagnosticEmitter.cpp
+    Cora/Diag/DiagnosticEngine.cpp
+    Cora/Diag/DiagnosticFlagParser.cpp
+)
+
+# The diagnostic layer is self-contained. Keeping it in its own target makes
+# it usable by the compiler, tools and tests without pulling in codegen.
+add_library(CoraDiag STATIC ${CORA_DIAG_SOURCES})
+
+target_include_directories(CoraDiag
+    PUBLIC
+        ${PROJECT_SOURCE_DIR}/include
+)
+
+target_compile_features(CoraDiag PUBLIC cxx_std_17)
+
+if (MSVC)
+    target_compile_options(CoraDiag PRIVATE /W4 /permissive-)
+else()
+    target_compile_options(CoraDiag PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+
 set(CORA_LIBRARY_SOURCES
     Cora/AIR/AIR.cpp
     Cora/AST/AST.cpp
@@ -11,6 +37,7 @@ target_include_directories(Cora
 )
 
 target_compile_features(Cora PUBLIC cxx_std_17)
+target_link_libraries(Cora PUBLIC CoraDiag)
 
 if (MSVC)
     target_compile_options(Cora PRIVATE /W4 /permissive-)

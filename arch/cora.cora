@@ -283,15 +283,24 @@ type (
 mut x = 0x123; // 123u32, 123_i32                           
 mut x = 0x123; // 123f32, 123f64 
 
-mut x = ''; //                           
-mut x = ''u8; //                           
-mut x = r''u16; //                           
-mut x = r''u32; //                           
+mut x = 0b101;
+mut x = 0b101u8;
+mut x = 0x123u16;
+mut x = 0x123u32;
+mut x = 0o123u64;
+mut x = 0o123u128;
+mut x = 0x123_123u8;
+mut x = 1_000_000;
 
-mut x = ""u8; //                           
-mut x = ""u16; //                           
-mut x = ""u32; //                           
-mut x = r""u16; //                           
+mut x = 'h'; //                           
+mut x = 'H'u8; //                           
+mut x = r'H'u16; //                           
+mut x = r'H'u32; //                           
+
+mut x = "hello"u8; //                           
+mut x = "world"u16; //                           
+mut x = "!"u32; //                           
+mut x = r"hello"u16; //                           
 
 mut x = 2.0e3f32;                       
 mut x = 2.0f64;
