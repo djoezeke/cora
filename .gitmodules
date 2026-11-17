@@ -1,0 +1,6 @@
+[submodule "deps/argparse"]
+	path = deps/argparse
+	url = https://github.com/djoezeke/argparse.git
+[submodule "deps/mytoml"]
+	path = deps/mytoml
+	url = https://github.com/djoezeke/mytoml.git
