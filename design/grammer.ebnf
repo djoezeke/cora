@@ -1,0 +1,1154 @@
+(* ==========================================================================
+   The Cora Programming Language -- Extended BNF Grammar
+   ==========================================================================
+
+   This grammar is written in ISO/IEC 14977 EBNF:
+
+       =        definition
+       ;        end of rule
+       |        alternation
+       ,        concatenation
+       [ ... ]  optional
+       { ... }  zero or more repetitions
+       ( ... )  grouping
+       "..."    terminal string
+       ? ... ?  special sequence (described informally)
+
+   The grammar uses C++, Rust, Zig, and Go as design references.  It is a
+   specification of the intended surface language; the notes at the end of
+   each section record the few places where a parser needs context-sensitive
+   disambiguation (generic angle brackets, struct initializers, and blocks).
+
+   ========================================================================== *)
+
+
+(* ==========================================================================
+   1. Lexical grammar
+   ========================================================================== *)
+
+compilation-unit        = { top-level-item }, end-of-file ;
+
+end-of-file             = ? end of source text ? ;
+
+top-level-item          = declaration ;
+
+(* --- identifiers --------------------------------------------------------- *)
+
+identifier              = identifier-start, { identifier-continue } ;
+
+identifier-start        = ascii-letter
+                        | "_"
+                        | ? Unicode code point with XID_Start property ? ;
+
+identifier-continue     = identifier-start
+                        | decimal-digit
+                        | ? Unicode code point with XID_Continue property ? ;
+
+ascii-letter            = "A" | "B" | "C" | "D" | "E" | "F" | "G" | "H"
+                        | "I" | "J" | "K" | "L" | "M" | "N" | "O" | "P"
+                        | "Q" | "R" | "S" | "T" | "U" | "V" | "W" | "X"
+                        | "Y" | "Z"
+                        | "a" | "b" | "c" | "d" | "e" | "f" | "g" | "h"
+                        | "i" | "j" | "k" | "l" | "m" | "n" | "o" | "p"
+                        | "q" | "r" | "s" | "t" | "u" | "v" | "w" | "x"
+                        | "y" | "z" ;
+
+lifetime                = "'", identifier ;
+
+(* --- literals ------------------------------------------------------------ *)
+
+literal                 = integer-literal
+                        | float-literal
+                        | character-literal
+                        | string-literal
+                        | boolean-literal
+                        | null-literal ;
+
+boolean-literal         = "true" | "false" ;
+
+null-literal            = "null" ;
+
+integer-literal         = ( decimal-literal
+                          | binary-literal
+                          | octal-literal
+                          | hexadecimal-literal ),
+                          [ [ "_" ], integer-suffix ] ;
+
+decimal-literal         = "0"
+                        | decimal-digit-nonzero,
+                          { [ "_" ], decimal-digit } ;
+
+binary-literal          = "0", ( "b" | "B" ),
+                          binary-digit, { [ "_" ], binary-digit } ;
+
+octal-literal           = "0", ( "o" | "O" ),
+                          octal-digit, { [ "_" ], octal-digit } ;
+
+hexadecimal-literal     = "0", ( "x" | "X" ),
+                          hexadecimal-digit,
+                          { [ "_" ], hexadecimal-digit } ;
+
+decimal-digit           = "0" | "1" | "2" | "3" | "4"
+                        | "5" | "6" | "7" | "8" | "9" ;
+
+decimal-digit-nonzero   = "1" | "2" | "3" | "4" | "5"
+                        | "6" | "7" | "8" | "9" ;
+
+binary-digit            = "0" | "1" ;
+
+octal-digit             = "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" ;
+
+hexadecimal-digit       = decimal-digit
+                        | "a" | "b" | "c" | "d" | "e" | "f"
+                        | "A" | "B" | "C" | "D" | "E" | "F" ;
+
+integer-suffix          = ( "i" | "u" ),
+                          ( "8" | "16" | "32" | "64" | "128" | "size" ) ;
+
+float-literal           = decimal-literal,
+                          ( ".", [ decimal-literal ], [ exponent-part ]
+                          | exponent-part ),
+                          [ float-suffix ] ;
+
+exponent-part           = ( "e" | "E" ), [ "+" | "-" ],
+                          decimal-digit, { [ "_" ], decimal-digit } ;
+
+float-suffix            = "f", ( "16" | "32" | "64" | "128" ) ;
+
+character-literal       = "'", ( character | escape-sequence ), "'",
+                          [ encoding-suffix ] ;
+
+string-literal          = [ "r" ], '"', { string-character }, '"',
+                          [ encoding-suffix ] ;
+
+string-character        = ? any source character except '"' and newline ?
+                        | escape-sequence ;
+
+character               = ? any source character except "'", "\", and newline ? ;
+
+escape-sequence         = "\\",
+                          ( "'" | '"' | "\" | "0" | "a" | "b" | "e"
+                          | "f" | "n" | "r" | "t" | "v"
+                          | "x", hexadecimal-digit, hexadecimal-digit
+                          | "u", hexadecimal-digit, hexadecimal-digit,
+                            hexadecimal-digit, hexadecimal-digit
+                          | "U", hexadecimal-digit, hexadecimal-digit,
+                            hexadecimal-digit, hexadecimal-digit,
+                            hexadecimal-digit, hexadecimal-digit,
+                            hexadecimal-digit, hexadecimal-digit ) ;
+
+encoding-suffix         = ( "u" | "i" ),
+                          ( "8" | "16" | "32" | "64" | "128" ) ;
+
+(* --- comments and layout ------------------------------------------------- *)
+
+comment                 = line-comment
+                        | doc-line-comment
+                        | block-comment
+                        | doc-block-comment ;
+
+line-comment            = "//", { ? any character except a line terminator ? },
+                          line-terminator ;
+
+doc-line-comment        = "//!", { ? any character except a line terminator ? },
+                          line-terminator ;
+
+block-comment           = "/*", { block-comment-item }, "*/" ;
+
+doc-block-comment       = "/*!", { block-comment-item }, "*/" ;
+
+block-comment-item      = block-comment
+                        | ? any character sequence not containing "*/" ? ;
+
+line-terminator         = ? line feed, carriage return, or CRLF ? ;
+
+whitespace              = ? space, tab, vertical tab, form feed,
+                            or Unicode whitespace ? ;
+
+(* --- punctuation and operators ------------------------------------------ *)
+
+punctuator              = "(" | ")" | "[" | "]" | "{" | "}"
+                        | "," | ";" | ":" | "::" | ":=" | "."
+                        | ".." | "..=" | ".=" | ".==" | ".!="
+                        | "?" | "??"
+                        | "+" | "-" | "*" | "/" | "%" | "++" | "--"
+                        | "+=" | "-=" | "*=" | "/=" | "%="
+                        | "&" | "|" | "^" | "~" | "!" | "&&" | "||"
+                        | "&=" | "|=" | "^="
+                        | "=" | "==" | "!=" | "<" | ">" | "<=" | ">="
+                        | "<=>" | "<<" | ">>" | "<<=" | ">>="
+                        | "->" | "=>" | "^^" | "..." | "$" | "@"
+                        | "[[" | "]]" | "[:" | ":]" ;
+
+reserved-word           = "abstract" | "alignof" | "any" | "as" | "async"
+                        | "attribute" | "await" | "borrow" | "box"
+                        | "break" | "case" | "comptime" | "concept"
+                        | "const" | "constexpr" | "continue" | "decltype"
+                        | "default" | "defer" | "do" | "else" | "enum"
+                        | "expand" | "export" | "extern" | "fallthrough"
+                        | "false" | "final" | "fn" | "for" | "func"
+                        | "goto" | "if" | "impl" | "import" | "in"
+                        | "inline" | "interface" | "internal" | "is"
+                        | "let" | "macro" | "match" | "mod" | "module"
+                        | "move" | "mut" | "mutable" | "nameof" | "namespace"
+                        | "never" | "new"
+                        | "null" | "offsetof" | "operator" | "override"
+                        | "own" | "private" | "protected" | "pub"
+                        | "public" | "raw" | "ref" | "requires" | "return"
+                        | "sealed" | "self" | "Self" | "shared" | "sizeof"
+                        | "static" | "static_assert" | "struct" | "super"
+                        | "switch" | "this" | "trait" | "true" | "type"
+                        | "typeof" | "union" | "unsafe" | "use" | "using"
+                        | "var" | "virtual" | "void" | "weak" | "when"
+                        | "where" | "while" | "yield" ;
+
+(*
+   Note: `fn` and `func` are synonyms, as are `var` and `mut`.  `comptime`
+   and `constexpr` are synonyms for compile-time evaluation.  A lexer uses
+   longest-match for punctuators, so `<=>` is one token, not `<=` followed
+   by `>`, and `..=` is one token, not `..` followed by `=`.
+*)
+
+(* ==========================================================================
+   2. Compilation units, modules, imports, and declarations
+   ========================================================================== *)
+
+declaration             = { declaration-decorator }, declaration-core ;
+
+declaration-decorator   = attribute
+                        | annotation
+                        | visibility
+                        | declaration-modifier ;
+
+visibility              = "pub" | "public" | "private"
+                        | "protected" | "internal" ;
+
+declaration-modifier    = compile-time-specifier
+                        | "static" | "inline" | "extern", [ string-literal ]
+                        | "export" | "unsafe" | "virtual" | "override"
+                        | "final" | "abstract" | "sealed" | "async" ;
+
+declaration-core        = module-declaration
+                        | namespace-declaration
+                        | import-declaration
+                        | using-declaration
+                        | directive-declaration
+                        | function-declaration
+                        | variable-declaration
+                        | constant-declaration
+                        | shorthand-declaration
+                        | type-declaration
+                        | struct-declaration
+                        | union-declaration
+                        | enum-declaration
+                        | interface-declaration
+                        | trait-declaration
+                        | concept-declaration
+                        | impl-declaration
+                        | macro-declaration ;
+
+compile-time-specifier  = "comptime" | "constexpr" ;
+
+(* --- modules ------------------------------------------------------------- *)
+
+module-declaration      = ( "mod" | "module" ), identifier,
+                          ( ";" | "{" { declaration } "}" ) ;
+
+namespace-declaration   = "namespace", path-expression,
+                          "{" { declaration } "}" ;
+
+(* --- imports ------------------------------------------------------------- *)
+
+import-declaration      = "import",
+                          ( import-group | import-path, [ "as", identifier ] ),
+                          ";" ;
+
+import-group            = "(", { import-item, ";" }, ")" ;
+
+import-item             = import-path, [ "as", identifier ] ;
+
+import-path             = [ "::" ], import-segment,
+                          { "::", ( import-segment | import-selection ) } ;
+
+import-segment          = identifier ;
+
+import-selection        = "{", [ import-path, { ",", import-path }, [ "," ] ],
+                          "}" ;
+
+(* --- using declarations -------------------------------------------------- *)
+
+using-declaration       = "using", using-clause, ";" ;
+
+using-clause            = using-alias | using-import ;
+
+using-alias             = identifier, [ generic-parameter-list ],
+                          "=", type ;
+
+using-import            = [ "::" ], using-path, [ "as", identifier ] ;
+
+using-path              = identifier, { "::", identifier } ;
+
+(* --- compiler / meta directives ----------------------------------------- *)
+
+directive-declaration   = annotation, ";" ;
+
+(* ==========================================================================
+   3. Types
+   ========================================================================== *)
+
+type                    = reference-type
+                        | raw-pointer-type
+                        | owned-type
+                        | prefix-slice-type
+                        | pack-type
+                        | "(", type, ")"
+                        | postfix-type ;
+
+reference-type          = "&", [ lifetime ], [ "mut" ], type ;
+
+raw-pointer-type        = "*", [ "const" | "mut" ], type ;
+
+owned-type              = ( "own" | "box" | "weak" | "shared" ), type ;
+
+prefix-slice-type       = "[", type, "]" ;
+
+pack-type               = "...", type ;
+
+postfix-type            = primary-type, { type-postfix } ;
+
+type-postfix            = "[" [ expression ] "]"
+                        | generic-argument-list
+                        | "?"
+                        | "!"
+                        | "..." ;
+
+primary-type            = primitive-type
+                        | type-path
+                        | tuple-type
+                        | function-type
+                        | inline-aggregate-type
+                        | reflection-type
+                        | "void"
+                        | "never"
+                        | "any"
+                        | "type" ;
+
+primitive-type          = "bool" | "char" | "str"
+                        | "i8" | "i16" | "i32" | "i64" | "i128" | "isize"
+                        | "u8" | "u16" | "u32" | "u64" | "u128" | "usize"
+                        | "f16" | "f32" | "f64" | "f128" ;
+
+tuple-type              = "(", [ type, { ",", type }, [ "," ] ], ")" ;
+
+function-type           = "func", "(", [ type-parameter-list ], ")",
+                          [ "->", type ] ;
+
+type-parameter-list     = type-parameter, { ",", type-parameter }, [ "," ] ;
+
+type-parameter          = [ identifier, ":" ], type, [ "..." ] ;
+
+type-path               = [ "::" ], type-path-segment,
+                          { "::", type-path-segment } ;
+
+type-path-segment       = identifier, [ generic-argument-list ] ;
+
+reflection-type         = "typeof", "(", expression, ")"
+                        | "decltype", "(", expression, ")" ;
+
+inline-aggregate-type   = inline-struct-type
+                        | inline-union-type
+                        | inline-enum-type
+                        | inline-interface-type
+                        | inline-trait-type ;
+
+inline-struct-type      = "struct",
+                          [ ":", type-path, { ",", type-path } ],
+                          "{", { struct-member }, "}" ;
+
+inline-union-type       = "union", "{", { union-member }, "}" ;
+
+inline-enum-type        = "enum", [ ":", type ],
+                          "{", { enumerator }, "}" ;
+
+inline-interface-type   = "interface",
+                          [ ":", type-path, { ",", type-path } ],
+                          "{", { declaration }, "}" ;
+
+inline-trait-type       = "trait",
+                          [ ":", type-path, { ",", type-path } ],
+                          "{", { declaration }, "}" ;
+
+(* ==========================================================================
+   4. Generic parameters, arguments, and constraints
+   ========================================================================== *)
+
+generic-parameter-list  = "<", generic-parameter,
+                          { ",", generic-parameter }, [ "," ], ">" ;
+
+generic-parameter       = [ compile-time-specifier ],
+                          ( type-parameter
+                          | const-generic-parameter
+                          | lifetime-parameter
+                          | parameter-pack-parameter ) ;
+
+type-parameter          = identifier, [ ":", constraint ],
+                          [ "=", type ] ;
+
+const-generic-parameter = "const", identifier, ":", type,
+                          [ "=", expression ] ;
+
+lifetime-parameter      = lifetime ;
+
+parameter-pack-parameter = identifier, ":", "...", type
+                        | "...", identifier, [ ":", type ] ;
+
+constraint              = type-bound, { "+", type-bound }
+                        | constraint-call ;
+
+type-bound              = type-path, [ generic-argument-list ]
+                        | "(", constraint, ")" ;
+
+constraint-call         = path-expression, "(", [ argument-list ], ")" ;
+
+generic-argument-list   = "<", generic-argument,
+                          { ",", generic-argument }, [ "," ], ">" ;
+
+generic-argument        = [ compile-time-specifier ],
+                          ( type
+                          | expression
+                          | lifetime
+                          | type, "..."
+                          | expression, "..." ) ;
+
+where-clause            = "where", where-predicate,
+                          { ",", where-predicate } ;
+
+where-predicate         = ( identifier | type ), ":", constraint
+                        | lifetime, ":", lifetime, { "+", lifetime } ;
+
+(*
+   Notes:
+   - `Box<T>`, `Result<T, E>`, and `Map<K, V>` use angle brackets in type
+     position without a disambiguating keyword.
+   - In expression position, a generic argument list is recognized only when
+     the `<` is adjacent to the preceding path segment and the matching `>`
+     is followed by a call, member access, or initializer delimiter.  Thus
+     `a < b` remains a comparison while `max<i32>(a, b)` is a call.
+   - `>>` in a nested generic argument list is split into two `>` tokens.
+*)
+
+(* ==========================================================================
+   5. Functions, parameters, and local bindings
+   ========================================================================== *)
+
+function-declaration    = "func", [ receiver ], identifier,
+                          [ generic-parameter-list ], "(",
+                          [ parameter-list ], ")",
+                          [ initialization-list ],
+                          [ "->", type ],
+                          [ where-clause ],
+                          function-body ;
+
+receiver                = "(", receiver-parameter, ")" ;
+
+receiver-parameter      = parameter ;
+
+function-body           = block | ";" ;
+
+parameter-list          = parameter, { ",", parameter }, [ "," ] ;
+
+parameter               = { parameter-decorator },
+                          [ compile-time-specifier ],
+                          [ parameter-mode ],
+                          parameter-form ;
+
+parameter-decorator     = attribute | annotation ;
+
+parameter-mode          = "mut" | "const" | "own" | "borrow" | "ref" ;
+
+parameter-form          = [ identifier, ":" ], [ "..." ], type,
+                          [ "..." ], [ "=", expression ] ;
+
+initialization-list     = ":", member-initializer,
+                          { ",", member-initializer } ;
+
+member-initializer      = identifier, "(", [ argument-list ], ")"
+                        | identifier, "=", expression ;
+
+parameter-type-list     = type, { ",", type }, [ "," ] ;
+
+variable-declaration    = ( "let" | "var" | "mut" ),
+                          variable-binding-list, ";" ;
+
+variable-binding-list   = variable-binding,
+                          { ",", variable-binding } ;
+
+variable-binding        = [ "mut" ], pattern, [ ":", type ],
+                          [ "=", expression ] ;
+
+constant-declaration    = "const", constant-binding-list, ";" ;
+
+constant-binding-list   = constant-binding,
+                          { ",", constant-binding } ;
+
+constant-binding        = pattern, [ ":", type ], "=", expression ;
+
+shorthand-declaration   = pattern, ":=", expression, ";" ;
+
+(* ==========================================================================
+   6. Structs, unions, enums, interfaces, traits, concepts, and impls
+   ========================================================================== *)
+
+struct-declaration      = "struct", identifier,
+                          [ generic-parameter-list ],
+                          [ ":", type-path, { ",", type-path } ],
+                          [ where-clause ],
+                          struct-body ;
+
+struct-body             = "{", { struct-member }, "}" ;
+
+struct-member           = field-declaration | declaration ;
+
+field-declaration       = { field-decorator }, [ visibility ],
+                          identifier, ":", type,
+                          [ "=", expression ],
+                          [ "," | ";" ] ;
+
+field-decorator         = attribute | annotation | "static" | "mutable" ;
+
+union-declaration       = "union", identifier,
+                          [ generic-parameter-list ],
+                          [ where-clause ],
+                          "{", { union-member }, "}" ;
+
+union-member            = field-declaration | declaration ;
+
+enum-declaration        = "enum", identifier,
+                          [ generic-parameter-list ],
+                          [ ":", type ],
+                          [ where-clause ],
+                          "{", { enumerator }, "}" ;
+
+enumerator              = { enumerator-decorator }, identifier,
+                          [ "(", [ parameter-list ], ")" ],
+                          [ "=", expression ],
+                          [ "," | ";" ] ;
+
+enumerator-decorator    = attribute | annotation ;
+
+interface-declaration   = "interface", identifier,
+                          [ generic-parameter-list ],
+                          [ ":", type-path, { ",", type-path } ],
+                          [ where-clause ],
+                          "{", { declaration }, "}" ;
+
+trait-declaration       = "trait", identifier,
+                          [ generic-parameter-list ],
+                          [ ":", type-path, { ",", type-path } ],
+                          [ where-clause ],
+                          "{", { declaration }, "}" ;
+
+concept-declaration     = "concept", identifier,
+                          [ generic-parameter-list ],
+                          ( "=", concept-definition, ";"
+                          | concept-body ) ;
+
+concept-definition      = "requires", "(", [ parameter-list ], ")",
+                          concept-body
+                        | expression ;
+
+concept-body            = "{", { concept-requirement }, "}" ;
+
+concept-requirement     = "{", expression, "}", [ "->", constraint ], ";"
+                        | expression, ";"
+                        | declaration ;
+
+impl-declaration        = "impl", [ generic-parameter-list ],
+                          impl-target, [ where-clause ], impl-body ;
+
+impl-target             = type-path, [ "for", type-path ] ;
+
+impl-body               = "{", { declaration }, "}" ;
+
+(*
+   A struct or union member may be a field or a nested declaration.  A field
+   is separated from the next member by a comma or semicolon; a nested
+   declaration that ends with `}` does not require a separator.  The grammar
+   permits a trailing separator.  `mutable` is accepted as a field decorator
+   for ABI compatibility with C++ `mutable` members.
+*)
+
+(* ==========================================================================
+   7. Macros and metaprogramming
+   ========================================================================== *)
+
+macro-declaration       = "macro", [ "attribute" ], identifier, [ "!" ],
+                          [ generic-parameter-list ], "(",
+                          [ macro-parameter-list ], ")",
+                          [ "->", type ],
+                          macro-definition ;
+
+macro-parameter-list    = macro-parameter,
+                          { ",", macro-parameter }, [ "," ] ;
+
+macro-parameter         = [ compile-time-specifier ],
+                          [ "$" ], identifier,
+                          [ ":", macro-fragment ], [ "..." ] ;
+
+macro-fragment          = "expr" | "stmt" | "type" | "pattern"
+                        | "item" | "ident" | "literal"
+                        | "meta" | "tt" ;
+
+macro-definition        = "{", token-tree, "}"
+                        | "=>", expression, ";" ;
+
+macro-invocation        = path-expression, "!", macro-delimiter ;
+
+macro-delimiter         = "(", [ token-tree ], ")"
+                        | "[", [ token-tree ], "]"
+                        | "{", [ token-tree ], "}" ;
+
+token-tree              = { token-tree-item } ;
+
+token-tree-item         = "(", [ token-tree ], ")"
+                        | "[", [ token-tree ], "]"
+                        | "{", [ token-tree ], "}"
+                        | token ;
+
+token                   = identifier
+                        | reserved-word
+                        | literal
+                        | punctuator ;
+
+(*
+   A token tree is a balanced token sequence.  Macro parameters are
+   substituted hygienically in the macro body; `$name` is accepted as an
+   alternate spelling of the `name` parameter so declarations can be ported
+   from macro_rules!-style languages.  `macro attribute` declares a procedural
+   attribute macro that is invoked as `@name(...)`.
+*)
+
+(* ==========================================================================
+   8. Attributes and annotations
+   ========================================================================== *)
+
+attribute               = "[[", attribute-content, "]]" ;
+
+attribute-content       = "=", expression
+                        | attribute-name,
+                          [ "(", [ attribute-argument-list ], ")" ] ;
+
+attribute-name          = path-expression ;
+
+attribute-argument-list = attribute-argument,
+                          { ",", attribute-argument }, [ "," ] ;
+
+attribute-argument      = [ identifier, "=" ], expression ;
+
+annotation              = "@", annotation-name,
+                          [ "(", [ annotation-argument-list ], ")" ] ;
+
+annotation-name         = path-expression ;
+
+annotation-argument-list = annotation-argument,
+                          { ",", annotation-argument }, [ "," ] ;
+
+annotation-argument     = [ identifier, "=" ], expression ;
+
+(*
+   Two metadata forms are distinguished:
+
+   - Attributes are compiler or library metadata written with double square
+     brackets: `[[nodiscard]]`, `[[repr(C)]]`, `[[deprecated("...")]]`.
+     `[[= expression]]` is the structured-annotation form; the expression
+     must evaluate to a compile-time value, e.g. `[[=Rename("user_name")]]`.
+
+   - Annotations are compile-time directives or procedural attribute macros:
+     `@derive(Json)`, `@cfg(feature = "reflection")`, `@inline`.
+     A standalone annotation followed by `;` is a directive declaration.
+*)
+
+(* ==========================================================================
+   9. Statements
+   ========================================================================== *)
+
+statement               = { statement-decorator }, statement-core ;
+
+statement-decorator     = attribute | annotation ;
+
+statement-core          = compound-statement
+                        | selection-statement
+                        | iteration-statement
+                        | jump-statement
+                        | labeled-statement
+                        | declaration-statement
+                        | expression-statement
+                        | defer-statement
+                        | compile-time-statement
+                        | expansion-statement
+                        | unsafe-statement
+                        | static-assert-statement
+                        | empty-statement ;
+
+declaration-statement   = declaration ;
+
+empty-statement         = ";" ;
+
+compound-statement      = block ;
+
+block                   = "{", { statement }, "}" ;
+
+labeled-statement       = identifier, ":", statement ;
+
+expression-statement    = expression, ";" ;
+
+(* --- selection ----------------------------------------------------------- *)
+
+selection-statement     = if-statement
+                        | switch-statement
+                        | match-statement ;
+
+if-statement            = [ compile-time-specifier ], "if", "(",
+                          if-header, ")", statement,
+                          [ "else", statement ] ;
+
+if-header               = [ initializer-clause, ";" ], expression ;
+
+initializer-clause      = variable-binding-list | expression ;
+
+switch-statement        = "switch", "(", expression, ")",
+                          "{", { switch-arm }, "}" ;
+
+switch-arm              = { statement-decorator },
+                          ( "case", switch-label,
+                            { ",", switch-label },
+                            [ "when", expression ]
+                          | "default" ),
+                          switch-arm-body ;
+
+switch-label            = expression ;
+
+switch-arm-body         = "->", statement
+                        | ":", { statement } ;
+
+match-statement         = match-expression, ";" ;
+
+(* --- iteration ----------------------------------------------------------- *)
+
+iteration-statement     = while-statement
+                        | do-while-statement
+                        | for-statement ;
+
+while-statement         = [ compile-time-specifier ], "while", "(",
+                          if-header, ")", statement ;
+
+do-while-statement      = "do", statement, "while", "(",
+                          expression, ")", ";" ;
+
+for-statement           = for-c-statement
+                        | for-range-statement
+                        | for-in-statement ;
+
+for-c-statement         = "for", "(", [ initializer-clause ], ";",
+                          [ expression ], ";", [ expression ], ")",
+                          statement ;
+
+for-range-statement     = "for", "(", range-binding, ":", expression, ")",
+                          statement ;
+
+for-in-statement        = "for", "(", range-binding, "in", expression, ")",
+                          statement ;
+
+range-binding           = [ "mut" | "const" | compile-time-specifier ],
+                          pattern, [ ":", type ] ;
+
+(* --- jumps and control transfer ------------------------------------------ *)
+
+jump-statement          = break-statement
+                        | continue-statement
+                        | return-statement
+                        | goto-statement
+                        | fallthrough-statement ;
+
+break-statement         = "break", [ identifier ], ";" ;
+
+continue-statement      = "continue", [ identifier ], ";" ;
+
+return-statement        = "return", [ expression ], ";" ;
+
+goto-statement          = "goto", identifier, ";" ;
+
+fallthrough-statement   = "fallthrough", ";" ;
+
+defer-statement         = "defer", statement ;
+
+(* --- compile-time and expansion statements ------------------------------- *)
+
+compile-time-statement  = compile-time-specifier, ( block | statement ) ;
+
+expansion-statement     = "expand",
+                          [ "(", expansion-binding, ":", expression, ")" ],
+                          statement ;
+
+expansion-binding       = [ compile-time-specifier | "const" | "mut" ],
+                          identifier, [ ":", type ] ;
+
+unsafe-statement        = "unsafe", block ;
+
+static-assert-statement = "static_assert", "(", expression,
+                          [ ",", string-literal ], ")", ";" ;
+
+(*
+   `if constexpr`, `if comptime`, `while comptime`, and `comptime { ... }`
+   are all accepted.  `expand (member : reflection-set) statement` is the
+   expansion statement.  A `for (comptime member : reflection-set)` loop is
+   the equivalent range-expansion form.  `break` and `continue` may name an
+   enclosing label; `goto` requires a matching identifier label.
+*)
+
+(* ==========================================================================
+   10. Patterns
+   ========================================================================== *)
+
+pattern                 = or-pattern ;
+
+or-pattern              = range-pattern, { "|", range-pattern } ;
+
+range-pattern           = primary-pattern,
+                          [ "..", [ "=" ], primary-pattern ] ;
+
+primary-pattern         = literal-pattern
+                        | wildcard-pattern
+                        | binding-pattern
+                        | enum-pattern
+                        | struct-pattern
+                        | tuple-pattern
+                        | slice-pattern
+                        | reference-pattern
+                        | "(", pattern, ")" ;
+
+literal-pattern         = [ "-" ],
+                          ( integer-literal | float-literal
+                          | character-literal | string-literal
+                          | boolean-literal | null-literal ) ;
+
+wildcard-pattern        = "_" ;
+
+binding-pattern         = [ "mut" | "ref", [ "mut" ] ], identifier,
+                          [ "@", pattern ] ;
+
+enum-pattern            = type-path, "(", [ pattern-list ], ")" ;
+
+struct-pattern          = type-path, "{",
+                          [ struct-pattern-field,
+                            { ",", struct-pattern-field }, [ "," ] ],
+                          "}" ;
+
+struct-pattern-field    = identifier, [ ":", pattern ]
+                        | ".." ;
+
+tuple-pattern           = "(", [ pattern-list ], ")" ;
+
+slice-pattern           = "[", [ pattern-list ], "]" ;
+
+reference-pattern       = "&", [ "mut" ], pattern ;
+
+pattern-list            = pattern, { ",", pattern }, [ "," ] ;
+
+(* ==========================================================================
+   11. Expressions
+   ========================================================================== *)
+
+expression              = lambda-expression
+                        | assignment-expression ;
+
+lambda-expression       = function-expression
+                        | closure-expression ;
+
+assignment-expression   = range-expression,
+                          [ assignment-operator,
+                            assignment-expression ] ;
+
+assignment-operator     = "=" | ":="
+                        | "+=" | "-=" | "*=" | "/=" | "%="
+                        | "&=" | "|=" | "^=" | "<<=" | ">>="
+                        | ".=" ;
+
+range-expression        = conditional-expression,
+                          [ ".." | "..=",
+                            [ conditional-expression ] ] ;
+
+conditional-expression  = coalescing-expression,
+                          [ "?", expression, ":", expression ] ;
+
+coalescing-expression   = logical-or-expression,
+                          { "??", logical-or-expression } ;
+
+logical-or-expression   = logical-and-expression,
+                          { "||", logical-and-expression } ;
+
+logical-and-expression  = bitwise-or-expression,
+                          { "&&", bitwise-or-expression } ;
+
+bitwise-or-expression   = bitwise-xor-expression,
+                          { "|", bitwise-xor-expression } ;
+
+bitwise-xor-expression  = bitwise-and-expression,
+                          { "^", bitwise-and-expression } ;
+
+bitwise-and-expression  = equality-expression,
+                          { "&", equality-expression } ;
+
+equality-expression     = relational-expression,
+                          { ( "==" | "!=" | "<=>" | ".==" | ".!=" ),
+                            relational-expression } ;
+
+relational-expression   = cast-expression,
+                          { ( "<" | ">" | "<=" | ">=" | "is" ),
+                            cast-expression } ;
+
+cast-expression         = shift-expression,
+                          { "as", type } ;
+
+shift-expression        = additive-expression,
+                          { ( "<<" | ">>" ), additive-expression } ;
+
+additive-expression     = multiplicative-expression,
+                          { ( "+" | "-" ), multiplicative-expression } ;
+
+multiplicative-expression = unary-expression,
+                          { ( "*" | "/" | "%" ), unary-expression } ;
+
+unary-expression        = prefix-operator, unary-expression
+                        | postfix-expression ;
+
+prefix-operator         = "&", [ "mut" ]
+                        | "&", "raw", [ "const" | "mut" ]
+                        | "*" | "!" | "~" | "+" | "-" | "++" | "--"
+                        | "move" | "borrow" | "own"
+                        | compile-time-specifier
+                        | "await"
+                        | "^^" ;
+
+postfix-expression      = primary-expression,
+                          { postfix-operation } ;
+
+postfix-operation       = call-suffix
+                        | index-suffix
+                        | member-access
+                        | reflection-member-access
+                        | generic-argument-list
+                        | "?"
+                        | "!"
+                        | "++"
+                        | "--"
+                        | pack-expansion-suffix
+                        | pack-index-suffix
+                        | macro-call-suffix ;
+
+call-suffix             = "(", [ argument-list ], ")" ;
+
+argument-list           = argument, { ",", argument }, [ "," ] ;
+
+argument                = [ identifier, ":" ], expression ;
+
+index-suffix            = "[", expression, "]" ;
+
+member-access           = ".", ( identifier | integer-literal ) ;
+
+reflection-member-access = ".", reflection-splice ;
+
+pack-expansion-suffix   = "..." ;
+
+pack-index-suffix       = "...", "[", expression, "]" ;
+
+macro-call-suffix       = "!", macro-delimiter ;
+
+(* --- primary expressions ------------------------------------------------- *)
+
+primary-expression      = literal
+                        | path-expression
+                        | "self" | "this" | "super"
+                        | "(", [ expression-list ], ")"
+                        | array-expression
+                        | struct-initializer
+                        | block-expression
+                        | if-expression
+                        | match-expression
+                        | function-expression
+                        | closure-expression
+                        | reflection-expression
+                        | macro-invocation
+                        | compile-time-expression
+                        | unsafe-expression
+                        | intrinsic-expression ;
+
+expression-list         = expression, { ",", expression }, [ "," ] ;
+
+array-expression        = "[", [ array-element,
+                                 { ",", array-element }, [ "," ] ], "]"
+                        | "[", expression, ";", expression, "]" ;
+
+array-element           = expression ;
+
+struct-initializer      = [ type-path ], "{",
+                          [ field-initializer,
+                            { ",", field-initializer }, [ "," ] ],
+                          "}" ;
+
+field-initializer       = identifier, [ ":", expression ]
+                        | "..", expression ;
+
+block-expression        = "{", { statement }, [ expression ], "}" ;
+
+if-expression           = "if", "(", expression, ")",
+                          ( block-expression | expression ),
+                          "else",
+                          ( if-expression
+                          | block-expression
+                          | expression ) ;
+
+match-expression        = "match", "(", expression, ")",
+                          "{", { match-arm }, "}" ;
+
+match-arm               = { statement-decorator }, pattern,
+                          [ "if", expression ],
+                          "=>", match-arm-body,
+                          [ "," ] ;
+
+match-arm-body          = expression | block-expression ;
+
+function-expression     = "func", [ generic-parameter-list ], "(",
+                          [ parameter-list ], ")",
+                          [ "->", type ],
+                          ( block-expression | expression ) ;
+
+closure-expression      = "|", [ closure-parameter-list ], "|",
+                          ( block-expression | expression ) ;
+
+closure-parameter-list  = closure-parameter,
+                          { ",", closure-parameter }, [ "," ] ;
+
+closure-parameter       = [ "mut" ], identifier, [ ":", type ] ;
+
+path-expression         = [ "::" ], path-segment,
+                          { "::", path-segment } ;
+
+path-segment            = identifier, [ generic-argument-list ] ;
+
+(* --- reflection and compile-time expressions ----------------------------- *)
+
+reflection-expression   = reflect-expression
+                        | reflection-splice
+                        | "typeof", "(", expression, ")"
+                        | "nameof", "(", ( expression | type ), ")" ;
+
+reflect-expression      = "^^", ( type | expression ) ;
+
+reflection-splice       = "[:", expression, ":]" ;
+
+compile-time-expression = compile-time-specifier,
+                          ( block-expression | expression ) ;
+
+unsafe-expression       = "unsafe", block-expression ;
+
+intrinsic-expression    = ( "sizeof" | "alignof" ),
+                          "(", ( expression | type ), ")"
+                        | "offsetof", "(", type, ",", identifier, ")" ;
+
+(*
+   Precedence, from highest to lowest:
+
+       postfix        call, index, member, reflection member, generic args,
+                      `?`, `!`, `++`, `--`, pack expansion, pack indexing
+       prefix         `&`, `&mut`, `&raw`, `*`, `!`, `~`, `+`, `-`, `++`,
+                      `--`, `move`, `borrow`, `own`, `comptime`,
+                      `constexpr`, `await`, `^^`
+       cast           `as`
+       multiplicative `* / %`
+       additive       `+ -`
+       shift          `<< >>`
+       relational     `< > <= >= is`
+       equality       `== != <=> .== .!=`
+       bitwise AND    `&`
+       bitwise XOR    `^`
+       bitwise OR     `|`
+       logical AND    `&&`
+       logical OR     `||`
+       coalescing     `??`
+       conditional    `?:`
+       range          `.. ..=`
+       assignment     `= := += -= *= /= %= &= |= ^= <<= >>= .=` (right)
+
+   `if`, `match`, blocks, function expressions, and closures are compound
+   expressions.  `{ ... }` is a block statement when it appears in statement
+   position and a block or struct initializer when it appears in expression
+   position.  A struct initializer without an explicit type (`{x: 1}`) is
+   permitted only where the expected type is known.
+*)
+
+(* ==========================================================================
+   12. Tooling extensions
+   ========================================================================== *)
+
+(*
+   The following forms are part of the grammar for tooling and macro
+   expansion.  They may appear only in source generated by an attribute macro
+   or a `.cora` tool input, never in source produced by hand.
+*)
+
+tool-directive          = "//", "cora:", ? directive text ? ;
+
+(*
+   In addition, the lexer recognizes these source-level directives as
+   comments so they do not affect parsing:
+
+       // ruff: lint on(readability-identifier-naming)
+       // ruff: format off
+       // cora: diagnostic push
+       // region: name
+       // endregion:
+*)
+
+(* ==========================================================================
+   13. Compatibility aliases
+   ========================================================================== *)
+
+(*
+   The surface syntax accepts these aliases with identical grammar:
+
+       fn              = func
+       var             = mut
+       comptime        = constexpr
+       mod             = module
+       pub             = public
+
+   Deprecated spellings are diagnosed by the semantic stage; they do not
+   introduce additional productions.
+*)
+
+(* ==========================================================================
+   14. Well-formedness requirements beyond context-free syntax
+   ==========================================================================
+
+   These rules are checked after parsing; they are recorded here so the
+   grammar and the semantic model stay in one place.
+
+   1. Every `break label` and `continue label` must name a lexically
+      enclosing labeled statement.
+   2. Every `goto label` must name a label in the same function body.
+   3. A `fallthrough;` must be the last statement of a switch arm and the
+      following arm must not be `default`.
+   4. `own`, `move`, and `borrow` are checked by the ownership pass.  A move
+      invalidates the source binding; a shared borrow (`&T`) may not mutate;
+      a mutable borrow (`&mut T`) is exclusive for its lifetime.
+   5. `[[= expression]]` annotations and parameters of an attribute macro
+      must be evaluable during compilation.
+   6. `expand` and `for (comptime ...)` require an expansion set produced by
+      the reflection API (`meta::nonstatic_data_members_of`, etc.).
+   7. Generic arguments must satisfy their declared bounds and where
+      predicates.
+   8. A `const` binding and a `comptime` declaration are compile-time
+      entities and must not read mutable runtime state.
+*)
+
