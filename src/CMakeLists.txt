@@ -76,7 +76,21 @@ endif()
 
 set(CORA_LIBRARY_SOURCES
     Cora/AIR/AIR.cpp
-    Cora/AST/AST.cpp
+    Cora/CIR/CIR.cpp
+    Cora/CodeGen/CBackend.cpp
+    Cora/Core/Digest.cpp
+    Cora/Core/SHA256.cpp
+    Cora/Driver/Driver.cpp
+    Cora/Frontend/Frontend.cpp
+    Cora/Sema/BorrowChecker.cpp
+    Cora/Sema/ComptimeEvaluator.cpp
+    Cora/Sema/Monomorphizer.cpp
+    Cora/Sema/NameResolver.cpp
+    Cora/Sema/PassManager.cpp
+    Cora/Sema/Sema.cpp
+    Cora/Sema/SymbolTable.cpp
+    Cora/Sema/TypeChecker.cpp
+    Cora/Sema/Types.cpp
 )
 
 add_library(Cora STATIC ${CORA_LIBRARY_SOURCES})
@@ -87,7 +101,7 @@ target_include_directories(Cora
 )
 
 target_compile_features(Cora PUBLIC cxx_std_17)
-target_link_libraries(Cora PUBLIC CoraDiag CoraLexer)
+target_link_libraries(Cora PUBLIC CoraParser CoraDiag CoraLexer)
 
 if (MSVC)
     target_compile_options(Cora PRIVATE /W4 /permissive-)

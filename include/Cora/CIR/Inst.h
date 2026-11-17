@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace cora::cir
@@ -100,7 +101,7 @@ namespace cora::cir
         /// Type syntax reference into CIR::types.
         TIndex type_ref = TNull;
 
-        /// Extra list: [count][items...] stored in CIR::extra.
+        /// Extra list: `extra_count` items stored in the owning body's arena.
         EIndex extra = ENull;
         std::uint32_t extra_count = 0;
 
@@ -108,6 +109,81 @@ namespace cora::cir
         std::uint32_t flags = 0;
 
         core::SourceSpan span{};
+    };
+
+    /// Columnar instruction storage.  The materialized Inst view keeps the
+    /// indexed CIR API convenient while hot fields remain in independent
+    /// arrays for linear passes.
+    class InstList final
+    {
+    public:
+        [[nodiscard]] std::size_t size() const noexcept { return tags_.size(); }
+        [[nodiscard]] bool empty() const noexcept { return tags_.empty(); }
+        void reserve(std::size_t count)
+        {
+            tags_.reserve(count);
+            a_.reserve(count);
+            b_.reserve(count);
+            c_.reserve(count);
+            d_.reserve(count);
+            ops_.reserve(count);
+            ints_.reserve(count);
+            floats_.reserve(count);
+            bools_.reserve(count);
+            names_.reserve(count);
+            types_.reserve(count);
+            extras_.reserve(count);
+            extra_counts_.reserve(count);
+            flags_.reserve(count);
+            spans_.reserve(count);
+        }
+        void clear() noexcept
+        {
+            tags_.clear(); a_.clear(); b_.clear(); c_.clear(); d_.clear();
+            ops_.clear(); ints_.clear(); floats_.clear(); bools_.clear();
+            names_.clear(); types_.clear(); extras_.clear();
+            extra_counts_.clear(); flags_.clear(); spans_.clear();
+        }
+        void push_back(const Inst &inst)
+        {
+            tags_.push_back(inst.tag);
+            a_.push_back(inst.a); b_.push_back(inst.b); c_.push_back(inst.c);
+            d_.push_back(inst.d); ops_.push_back(inst.op);
+            ints_.push_back(inst.int_value); floats_.push_back(inst.float_value);
+            bools_.push_back(inst.bool_value); names_.push_back(inst.name);
+            types_.push_back(inst.type_ref); extras_.push_back(inst.extra);
+            extra_counts_.push_back(inst.extra_count); flags_.push_back(inst.flags);
+            spans_.push_back(inst.span);
+        }
+        [[nodiscard]] Inst operator[](std::size_t index) const noexcept
+        {
+            Inst result{};
+            result.tag = tags_[index]; result.a = a_[index]; result.b = b_[index];
+            result.c = c_[index]; result.d = d_[index]; result.op = ops_[index];
+            result.int_value = ints_[index]; result.float_value = floats_[index];
+            result.bool_value = bools_[index]; result.name = names_[index];
+            result.type_ref = types_[index]; result.extra = extras_[index];
+            result.extra_count = extra_counts_[index]; result.flags = flags_[index];
+            result.span = spans_[index];
+            return result;
+        }
+        [[nodiscard]] const std::vector<Tag> &tags() const noexcept { return tags_; }
+        [[nodiscard]] const std::vector<IIndex> &operandsA() const noexcept { return a_; }
+        [[nodiscard]] const std::vector<IIndex> &operandsB() const noexcept { return b_; }
+
+    private:
+        std::vector<Tag> tags_;
+        std::vector<IIndex> a_, b_, c_, d_;
+        std::vector<Token::Tag> ops_;
+        std::vector<std::int64_t> ints_;
+        std::vector<double> floats_;
+        std::vector<bool> bools_;
+        std::vector<std::uint32_t> names_;
+        std::vector<TIndex> types_;
+        std::vector<EIndex> extras_;
+        std::vector<std::uint32_t> extra_counts_;
+        std::vector<std::uint32_t> flags_;
+        std::vector<core::SourceSpan> spans_;
     };
 
     /// Declaration flags.
@@ -119,6 +195,13 @@ namespace cora::cir
     static constexpr std::uint32_t CIR_FLAG_BARE_RETURN = 1u << 5;
 
     struct Param
+    {
+        std::uint32_t name = TNull;
+        TIndex type_ref = TNull;
+        core::SourceSpan span{};
+    };
+
+    struct Field
     {
         std::uint32_t name = TNull;
         TIndex type_ref = TNull;
@@ -148,13 +231,19 @@ namespace cora::cir
     struct Body
     {
         std::string name;
-        std::vector<Inst> insts{Inst{}}; // index 0 reserved for INull
+        InstList insts; // index 0 reserved for INull
         std::vector<std::uint32_t> extra{ENull};
         std::vector<Param> params;
+        std::vector<Field> fields;
+        TIndex return_type = TNull;
+        TIndex alias_type = TNull;
         std::vector<IIndex> roots;
         BIndex index = BNull;
         bool is_function = false;
+        bool is_type_alias = false;
         bool is_extern = false;
+
+        Body() { insts.push_back(Inst{}); }
 
         [[nodiscard]] IIndex add(Inst inst)
         {
@@ -168,7 +257,6 @@ namespace cora::cir
             if (items.empty())
                 return ENull;
             const EIndex at = static_cast<EIndex>(extra.size());
-            extra.push_back(static_cast<std::uint32_t>(items.size()));
             extra.insert(extra.end(), items.begin(), items.end());
             return at;
         }

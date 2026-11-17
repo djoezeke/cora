@@ -26,6 +26,11 @@ struct SourceSpan
         return end_offset > start_offset ? end_offset - start_offset : 0;
     }
 
+    [[nodiscard]] constexpr bool is_empty() const
+    {
+        return is_valid() && start_offset == end_offset;
+    }
+
     /// Merge two spans (e.g. combining child AST node spans into a parent).
     [[nodiscard]] static constexpr SourceSpan merge(SourceSpan a, SourceSpan b)
     {
@@ -47,6 +52,18 @@ struct LineCol
 {
     std::uint32_t line;   ///< 1-based.
     std::uint32_t column; ///< 1-based (byte or UTF-8 codepoint offset).
+};
+
+struct Utf8Location
+{
+    std::uint32_t line = 1;
+    std::uint32_t column = 1;
+};
+
+struct Utf16Location
+{
+    std::uint32_t line = 1;
+    std::uint32_t column = 1;
 };
 
 } // namespace cora::core

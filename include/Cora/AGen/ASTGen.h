@@ -1,447 +1,351 @@
+#ifndef CORA_AGEN_ASTGEN_H
+#define CORA_AGEN_ASTGEN_H
+
 #include <Cora/AST/AST.h>
 #include <Cora/CIR/CIR.h>
+#include <Cora/Core/SHA256.h>
+
+#include <string_view>
 
 namespace cora
 {
-
-    // ============================================================================
-    // AstGen — ast::AST → cir::CIR
-    // ============================================================================
+    /// Low-allocation AST to CIR lowering. Declaration bodies are independent
+    /// cache units, so an unchanged declaration can be copied from a previous
+    /// CIR without walking its AST again.
     class AstGen final
     {
     public:
-        explicit AstGen(ast::AST &ast) : ast_(ast) {}
+        explicit AstGen(const ast::AST &ast) : ast_(ast) {}
 
-        cir::CIR run()
+        [[nodiscard]] cir::CIR run(const cir::CIR *previous = nullptr)
         {
-            // Root body holds top-level decls.
-            cir::CIR::BIndex root_idx = newBody();
-            cir::GenCir gz = rootGen(root_idx);
+            cir::CIR result;
+            result.token_count = ast_.contentTokenCount();
+            result.source_digest = crypto::SHA256::hash(ast_.source);
+            result.revision = previous == nullptr ? 1 : previous->revision + 1;
+            const auto root = ast_.root;
+            if (root == ast::Node::NNull)
+                return result;
 
-            // Walk the ast::AST's root block, emitting each top-level decl.
-            const ast::AST::Node &root = ast_.nodes[ast_.nodes.size() ? 1 : 1];
-            for (auto child : ast_.list(root.data.block_stmts))
+            const ast::Node root_node = ast_.node(root);
+            for (const auto declaration : ast_.extra(root_node.data.extra_data.at,
+                                                     root_node.data.extra_data.count))
             {
-                if (!child)
+                if (declaration >= ast_.nodeCount())
                     continue;
-                genDecl(gz, child);
+                const auto key = declarationKey(declaration);
+                result.declaration_keys.push_back(key);
+                const auto old = findPrevious(previous, key);
+                if (old != nullptr)
+                {
+                    result.bodies.push_back(*old);
+                    result.bodies.back().index =
+                        static_cast<cir::BIndex>(result.bodies.size() - 1);
+                    continue;
+                }
+                emitDeclaration(result, declaration);
             }
-            return std::move(cir_);
+            return result;
         }
 
     private:
-        // ------------------------------------------------------------------
-        // Body / scope helpers
-        // ------------------------------------------------------------------
-        cir::CIR::BIndex newBody()
+        [[nodiscard]] core::Digest declarationKey(ast::Node::NIndex node) const
         {
-            cir_.bodies.emplace_back();
-            return static_cast<cir::CIR::BIndex>(cir_.bodies.size() - 1);
+            const auto span = ast_.span(node);
+            if (span.end_offset <= span.start_offset ||
+                span.end_offset > ast_.source.size())
+                return crypto::SHA256::hash(std::string_view{});
+            return crypto::SHA256::hash(std::string_view(
+                ast_.source.data() + span.start_offset, span.length()));
         }
 
-        cir::GenCir rootGen(cir::CIR::BIndex idx)
+        [[nodiscard]] const cir::Body *findPrevious(const cir::CIR *previous,
+                                                    const core::Digest &key) const
         {
-            cir::GenCir gz;
-            gz.body = &cir_.bodies[idx];
-            gz.first_inst = 0;
-            return gz;
-        }
-        // Descend into a fresh GenCir for a sub-block (child scope).
-        GenCir childGen(cir::GenCir &parent, cir::CIR::IIndex break_blk, uint32_t loop_depth, cir::ResLoc rl)
-        {
-            GenCir gz;
-            gz.body = parent.body;
-            gz.first_inst = static_cast<uint32_t>(parent.body->insts.size());
-            gz.parent = &parent;
-            gz.break_blk = break_blk;
-            gz.continue_blk = parent.continue_blk;
-            gz.loop_depth = loop_depth;
-            gz.rl = rl;
-            return gz;
+            if (previous == nullptr)
+                return nullptr;
+            for (std::size_t index = 0; index < previous->declaration_keys.size();
+                 ++index)
+                if (previous->declaration_keys[index] == key &&
+                    index < previous->bodies.size())
+                    return &previous->bodies[index];
+            return nullptr;
         }
 
-        // ------------------------------------------------------------------
-        // Names / literals
-        // ------------------------------------------------------------------
-        uint32_t internName(ast::AST::TIndex tok)
+        static cir::Tag tagFor(ast::Node::Tag tag)
         {
-            return cir_.internString(ast_.tokenText(tok));
-        }
-        uint32_t internStr(AST::TIndex tok)
-        {
-            return cir_.internString(ast_.tokenText(tok));
-        }
-
-        // ------------------------------------------------------------------
-        // Instruction emission shortcuts
-        // ------------------------------------------------------------------
-        cir::CIR::IIndex emitErrTok(cir::GenCir &gz, uint16_t err_tag)
-        {
-            cir::CIR::Inst i{};
-            i.tag = cir::CIR::Tag::ErrTok;
-            i.data.err_tag = err_tag;
-            return gz.emit(i);
-        }
-        cir::CIR::IIndex emitInt(cir::GenCir &gz, int64_t v)
-        {
-            cir::CIR::Inst i{};
-            i.tag = cir::CIR::Tag::Int;
-            i.data.int_value = v;
-            return gz.emit(i);
-        }
-        cir::CIR::IIndex emitRef(cir::GenCir &gz, uint32_t name)
-        {
-            cir::CIR::Inst i{};
-            i.tag = cir::CIR::Tag::Ref;
-            i.data.name_idx = name;
-            return gz.emit(i);
-        }
-        cir::CIR::IIndex emitLoad(cir::GenCir &gz, cir::CIR::IIndex src)
-        {
-            cir::CIR::Inst i{};
-            i.tag = cir::CIR::Tag::Load;
-            i.data.unary_op.target = src;
-            return gz.emit(i);
-        }
-
-        // Map ast::AST binary op token → ZIR inst tag.
-        static cir::CIR::Tag binTag(const ast::AST::Node &n, const ast::AST &ast)
-        {
-            // In the real code, switch on token tag; simplified here.
-            return cir::CIR::Tag::Add; // filled per-op below
-        }
-
-        // ------------------------------------------------------------------
-        // Declarations
-        // ------------------------------------------------------------------
-        cir::CIR::IIndex genDecl(cir::GenCir &gz, ast::AST::NIndex n)
-        {
-            const ast::AST::Node &node = ast_.nodes[n];
-            switch (node.tag)
+            switch (tag)
             {
-            case ast::AST::Tag::FnDecl:
-                return genFnDecl(gz, n);
-            case ast::AST::Tag::LetDecl:
-            case ast::AST::Tag::ConstDecl:
-                return genLetDecl(gz, n);
-            case ast::AST::Tag::Malformed:
-                return emitErrTok(gz, node.data.malformed.err);
+            case ast::Node::Tag::FnDecl: return cir::Tag::FnDecl;
+            case ast::Node::Tag::StructDecl: return cir::Tag::StructDecl;
+            case ast::Node::Tag::LetDecl:
+            case ast::Node::Tag::ConstDecl: return cir::Tag::LetDecl;
+            case ast::Node::Tag::Block: return cir::Tag::Block;
+            case ast::Node::Tag::ExprStmt: return cir::Tag::ExprStmt;
+            case ast::Node::Tag::IfSimple:
+            case ast::Node::Tag::IfFull: return cir::Tag::If;
+            case ast::Node::Tag::While: return cir::Tag::While;
+            case ast::Node::Tag::ForC: return cir::Tag::ForC;
+            case ast::Node::Tag::ForRange: return cir::Tag::ForRange;
+            case ast::Node::Tag::Return: return cir::Tag::Return;
+            case ast::Node::Tag::Break: return cir::Tag::Break;
+            case ast::Node::Tag::Continue: return cir::Tag::Continue;
+            case ast::Node::Tag::Defer: return cir::Tag::Defer;
+            case ast::Node::Tag::Identifier: return cir::Tag::Identifier;
+            case ast::Node::Tag::IntLit: return cir::Tag::IntLit;
+            case ast::Node::Tag::FloatLit: return cir::Tag::FloatLit;
+            case ast::Node::Tag::StringLit: return cir::Tag::StringLit;
+            case ast::Node::Tag::CharLit: return cir::Tag::CharLit;
+            case ast::Node::Tag::BoolLit: return cir::Tag::BoolLit;
+            case ast::Node::Tag::NullLit: return cir::Tag::NullLit;
+            case ast::Node::Tag::Unary: return cir::Tag::Unary;
+            case ast::Node::Tag::Binary: return cir::Tag::Binary;
+            case ast::Node::Tag::Assign: return cir::Tag::Assign;
+            case ast::Node::Tag::Call: return cir::Tag::Call;
+            case ast::Node::Tag::FieldAccess: return cir::Tag::FieldAccess;
+            case ast::Node::Tag::IndexExpr: return cir::Tag::Index;
+            case ast::Node::Tag::ArrayInit: return cir::Tag::ArrayInit;
+            case ast::Node::Tag::StructInit: return cir::Tag::StructInit;
+            case ast::Node::Tag::Paren: return cir::Tag::Paren;
+            default: return cir::Tag::Malformed;
+            }
+        }
+
+        cir::IIndex emitNode(cir::CIR &result, cir::Body &body,
+                             ast::Node::NIndex node)
+        {
+            if (node >= ast_.nodeCount())
+                return cir::INull;
+            const ast::Node value = ast_.node(node);
+            cir::Inst instruction{};
+            instruction.tag = tagFor(value.tag);
+            instruction.span = ast_.span(node);
+            instruction.op = ast_.token(value.main_token).tag;
+            if (value.tag == ast::Node::Tag::IntLit ||
+                value.tag == ast::Node::Tag::CharLit)
+                instruction.int_value =
+                    static_cast<std::int64_t>(ast_.token(value.main_token).int_val);
+            if (value.tag == ast::Node::Tag::BoolLit)
+                instruction.bool_value =
+                    ast_.token(value.main_token).tag == Token::Tag::T_TRUE;
+            if (value.tag == ast::Node::Tag::FloatLit)
+                instruction.float_value = ast_.token(value.main_token).float_val;
+            if (value.main_token != ast::Node::TNull)
+                instruction.name = result.internString(ast_.tokenText(value.main_token));
+            const auto emit_child = [this, &result, &body](ast::Node::NIndex child)
+            {
+                return child == ast::Node::NNull
+                           ? cir::INull
+                           : emitNode(result, body, child);
+            };
+            switch (value.tag)
+            {
+            case ast::Node::Tag::Binary:
+            case ast::Node::Tag::Assign:
+            case ast::Node::Tag::IndexExpr:
+            case ast::Node::Tag::TypeArray:
+                instruction.a = emit_child(value.data.node_and_node.lhs);
+                instruction.b = emit_child(value.data.node_and_node.rhs);
+                break;
+            case ast::Node::Tag::Unary:
+            case ast::Node::Tag::Paren:
+            case ast::Node::Tag::ExprStmt:
+            case ast::Node::Tag::Return:
+            case ast::Node::Tag::Defer:
+                instruction.a = emit_child(value.data.lhs);
+                break;
+            case ast::Node::Tag::IfSimple:
+            case ast::Node::Tag::While:
+                instruction.a = emit_child(value.data.cond_then.cond);
+                instruction.b = emit_child(value.data.cond_then.then_body);
+                break;
+            case ast::Node::Tag::IfFull:
+                instruction.a = emit_child(value.data.cond_then_else.cond);
+                instruction.b = emit_child(value.data.cond_then_else.then_body);
+                instruction.c = emit_child(value.data.cond_then_else.else_body);
+                break;
+            case ast::Node::Tag::ForRange:
+                instruction.a = emit_child(value.data.for_range.binding);
+                instruction.b = emit_child(value.data.for_range.iterable);
+                instruction.c = emit_child(value.data.for_range.body);
+                break;
+            case ast::Node::Tag::ForC:
+            {
+                std::vector<std::uint32_t> parts;
+                for (const auto part :
+                     ast_.extra(value.data.for_c.parts, value.data.for_c.part_count))
+                    parts.push_back(emit_child(part));
+                instruction.extra = body.addList(parts);
+                instruction.extra_count = static_cast<std::uint32_t>(parts.size());
+                instruction.a = emit_child(value.data.for_c.body);
+                break;
+            }
+            case ast::Node::Tag::LetDecl:
+            case ast::Node::Tag::ConstDecl:
+            case ast::Node::Tag::FieldDecl:
+                instruction.type_ref = emitType(result, value.data.let_decl.type);
+                instruction.a = emit_child(value.data.let_decl.type);
+                instruction.b = emit_child(value.data.let_decl.init);
+                break;
+            case ast::Node::Tag::FieldAccess:
+                instruction.a = emit_child(value.data.field_access.base);
+                instruction.name =
+                    result.internString(ast_.tokenText(value.data.field_access.field));
+                break;
+            case ast::Node::Tag::Call:
+                instruction.a = emit_child(value.data.call.callee);
+            {
+                std::vector<std::uint32_t> args;
+                for (const auto argument :
+                     ast_.extra(value.data.call.args, value.data.call.arg_count))
+                    args.push_back(emit_child(argument));
+                instruction.extra = body.addList(args);
+                instruction.extra_count = static_cast<std::uint32_t>(args.size());
+                break;
+            }
+            case ast::Node::Tag::StructInit:
+            {
+                if (value.data.struct_init.type < ast_.nodeCount())
+                {
+                    const ast::Node type = ast_.node(value.data.struct_init.type);
+                    if (type.main_token != ast::Node::TNull)
+                        instruction.name =
+                            result.internString(ast_.tokenText(type.main_token));
+                }
+                std::vector<std::uint32_t> fields;
+                const auto items = ast_.extra(value.data.struct_init.fields,
+                                              value.data.struct_init.field_count * 2);
+                for (std::size_t item_index = 0; item_index < items.size();
+                     ++item_index)
+                {
+                    const auto item = items[item_index];
+                    if ((item_index & 1u) == 0)
+                    {
+                        fields.push_back(result.internString(
+                            ast_.tokenText(static_cast<ast::Node::TIndex>(item))));
+                        continue;
+                    }
+                    if (item >= ast_.nodeCount())
+                    {
+                        fields.push_back(cir::INull);
+                        continue;
+                    }
+                    fields.push_back(emit_child(item));
+                }
+                instruction.extra = body.addList(fields);
+                instruction.extra_count = static_cast<std::uint32_t>(fields.size());
+                break;
+            }
+            case ast::Node::Tag::FnDecl:
+                instruction.a = emit_child(value.data.fn_decl.body);
+                for (const auto parameter :
+                     ast_.parameters(node))
+                {
+                    if (parameter == ast::Node::NNull)
+                        continue;
+                    const ast::Node parameter_node = ast_.node(parameter);
+                    cir::Param param;
+                    param.name = result.internString(ast_.tokenText(parameter_node.main_token));
+                    param.type_ref = emitType(result, ast_.paramType(parameter));
+                    param.span = ast_.span(parameter);
+                    body.params.push_back(param);
+                }
+                body.return_type = emitType(result, ast_.returnType(node));
+                break;
+            case ast::Node::Tag::Block:
+            case ast::Node::Tag::StructDecl:
+            case ast::Node::Tag::ArrayInit:
+            {
+                std::vector<std::uint32_t> children;
+                for (const auto child :
+                     ast_.extra(value.data.extra_data.at, value.data.extra_data.count))
+                    children.push_back(emit_child(child));
+                instruction.extra = body.addList(children);
+                instruction.extra_count = static_cast<std::uint32_t>(children.size());
+                break;
+            }
             default:
-                return emitErrTok(gz, /*ExpectedDecl*/ 0);
+                break;
             }
+            const auto emitted = body.add(instruction);
+            return emitted;
         }
 
-        cir::CIR::IIndex genFnDecl(cir::GenCir &gz, ast::AST::NIndex n)
+        cir::TIndex emitType(cir::CIR &result, ast::Node::NIndex node)
         {
-            const ast::AST::Node &node = ast_.nodes[n];
-            uint32_t name = internName(node.token);
-
-            // New body for the function.
-            cir::CIR::BodyIndex fn_body = newBody();
-
-            // Fresh GenCir for the function body; RL is Return.
-            cir::GenCir fgz;
-            fgz.body = &cir_.bodies[fn_body];
-            fgz.first_inst = 0;
-            fgz.parent = &gz;
-            fgz.rl = cir::ResLoc::Return();
-
-            // Walk the ast::AST block into the new body.
-            if (node.data.fn_decl.body)
-                genBlockBody(fgz, node.data.fn_decl.body);
-
-            // Params: just names for now.
-            std::vector<uint32_t> params;
-            for (auto p : ast_.list(node.data.fn_decl.params))
-                params.push_back(ast_.nodes[p].token);
-            auto pextra = cir_.addList(*gz.body, params);
-
-            cir::CIR::Inst i{};
-            i.tag = cir::CIR::Tag::FnDecl;
-            i.data.fn_decl = {name, /*body=*/fn_body, pextra,
-                              static_cast<uint32_t>(params.size())};
-            return gz.emit(i);
-        }
-
-        cir::CIR::IIndex genLetDecl(cir::GenCir &gz, ast::AST::NIndex n)
-        {
-            const ast::AST::Node &node = ast_.nodes[n];
-            uint32_t name = internName(node.token);
-
-            cir::CIR::IIndex init = node.data.let_init
-                                        ? genExpr(gz, node.data.let_init, cir::ResLoc::Ref(/*slot*/ 0))
-                                        : cir::CIR::INull;
-
-            cir::CIR::Inst i{};
-            i.tag = cir::CIR::Tag::LetDecl;
-            i.data.let_decl = {name, init};
-            return gz.emit(i);
-        }
-
-        // ------------------------------------------------------------------
-        // Statements
-        // ------------------------------------------------------------------
-        void genBlockBody(cir::GenCir &gz, ast::AST::NIndex block_ast)
-        {
-            // Emit a Block inst, then walk stmts inline; closeBlock patches len.
-            cir::CIR::Inst b{};
-            b.tag = cir::CIR::Tag::Block;
-            cir::CIR::IIndex blk = gz.emit(b);
-
-            cir::GenCir inner = childGen(gz, /*break_blk=*/blk, gz.loop_depth, gz.rl);
-            const ast::AST::Node &node = ast_.nodes[block_ast];
-            for (auto s : ast_.list(node.data.block_stmts))
+            if (node >= ast_.nodeCount())
+                return cir::TNull;
+            const ast::Node value = ast_.node(node);
+            cir::TypeRefInfo type;
+            type.span = ast_.span(node);
+            switch (value.tag)
             {
-                if (!s)
-                    continue;
-                genStmt(inner, s);
-            }
-            gz.closeBlock(blk);
-
-            // If it's a fn body: implicit `return` the block's value.
-            if (gz.rl.tag == cir::ResLoc::Tag::Return && /*no explicit return*/ true)
-            {
-                cir::CIR::Inst r{};
-                r.tag = cir::CIR::Tag::ReturnVoid;
-                gz.emit(r);
-            }
-        }
-
-        cir::CIR::IIndex genStmt(cir::GenCir &gz, ast::AST::NIndex n)
-        {
-            const ast::AST::Node &node = ast_.nodes[n];
-            switch (node.tag)
-            {
-            case ast::AST::Tag::Return:
-                return genReturn(gz, n);
-            case ast::AST::Tag::ExprStmt:
-                return genExpr(gz, node.data.inner, cir::ResLoc::Discard());
-            case ast::AST::Tag::Block:
-                genBlockBody(gz, n);
-                return cir::CIR::Null;
-            case ast::AST::Tag::IfSimple:
-                return genIf(gz, n);
-            case ast::AST::Tag::IfFull:
-                return genIf(gz, n);
-            case ast::AST::Tag::While:
-                return genWhile(gz, n);
-            case ast::AST::Tag::Break:
-            {
-                cir::CIR::IIndex target = findBreakTarget(gz);
-                cir::CIR::Inst i{};
-                i.tag = cir::CIR::Tag::BreakVoid;
-                i.data.brk.block = target;
-                return gz.emit(i);
-            }
-            case ast::AST::Tag::Continue:
-            {
-                cir::CIR::IIndex target = findContinueTarget(gz);
-                cir::CIR::Inst i{};
-                i.tag = cir::CIR::Tag::BreakVoid;
-                i.data.brk.block = target;
-                return gz.emit(i);
-            }
-            case ast::AST::Tag::LetDecl:
-            case ast::AST::Tag::ConstDecl:
-                return genLetDecl(gz, n);
-            case ast::AST::Tag::Malformed:
-                return emitErrTok(gz, node.data.malformed.err);
+            case ast::Node::Tag::TypeName:
+                type.kind = cir::TypeRefKind::Named;
+                type.name = result.internString(ast_.tokenText(value.main_token));
+                break;
+            case ast::Node::Tag::TypePointer:
+                type.kind = cir::TypeRefKind::Pointer;
+                type.element = emitType(result, value.data.lhs);
+                break;
+            case ast::Node::Tag::TypeArray:
+                type.kind = cir::TypeRefKind::Array;
+                type.element = emitType(result, value.data.node_and_node.lhs);
+                if (value.data.node_and_node.rhs != ast::Node::NNull)
+                {
+                    const ast::Node length = ast_.node(value.data.node_and_node.rhs);
+                    if (length.tag == ast::Node::Tag::IntLit)
+                        type.length = ast_.token(length.main_token).int_val;
+                }
+                break;
+            case ast::Node::Tag::TypeFn:
+                type.kind = cir::TypeRefKind::Function;
+                for (const auto param : ast_.parameters(node))
+                    type.params.push_back(emitType(result, param));
+                type.result = emitType(result, ast_.returnType(node));
+                break;
             default:
-                return genExpr(gz, n, cir::ResLoc::Discard());
+                type.kind = cir::TypeRefKind::Named;
+                type.name = result.internString("void");
+                break;
             }
+            return result.addType(std::move(type));
         }
 
-        cir::CIR::IIndex genReturn(cir::GenCir &gz, ast::AST::NIndex n)
+        void emitDeclaration(cir::CIR &result, ast::Node::NIndex node)
         {
-            const ast::AST::Node &node = ast_.nodes[n];
-            if (!node.data.ret_value)
+            const ast::Node value = ast_.node(node);
+            const std::string name =
+                value.main_token == ast::Node::TNull
+                    ? std::string{}
+                    : std::string(ast_.tokenText(value.main_token));
+            const auto body_index = result.addBody(name);
+            cir::Body &body = result.bodies[body_index];
+            body.is_function = value.tag == ast::Node::Tag::FnDecl;
+            body.is_extern = false;
+            body.is_type_alias = value.tag == ast::Node::Tag::TypeDecl;
+            if (body.is_type_alias && value.data.lhs < ast_.nodeCount())
+                body.alias_type = emitType(result, value.data.lhs);
+            if (value.tag == ast::Node::Tag::StructDecl)
             {
-                cir::CIR::Inst i{};
-                i.tag = cir::CIR::Tag::ReturnVoid;
-                return gz.emit(i);
+                for (const auto field_node :
+                     ast_.extra(value.data.extra_data.at, value.data.extra_data.count))
+                {
+                    const ast::Node field = ast_.node(field_node);
+                    if (field.tag != ast::Node::Tag::FieldDecl)
+                        continue;
+                    cir::Field field_info;
+                    field_info.name = result.internString(ast_.tokenText(field.main_token));
+                    field_info.type_ref = emitType(result, field.data.let_decl.type);
+                    field_info.span = ast_.span(field_node);
+                    body.fields.push_back(field_info);
+                }
             }
-            cir::CIR::IIndex v = genExpr(gz, node.data.ret_value, cir::ResLoc::Return());
-            cir::CIR::Inst i{};
-            i.tag = cir::CIR::Tag::Return;
-            i.data.unary_op.target = v;
-            return gz.emit(i);
+            body.roots.push_back(emitNode(result, body, node));
         }
 
-        cir::CIR::IIndex genIf(cir::GenCir &gz, ast::AST::NIndex n)
-        {
-        const ast::AST::Node& node = ast_.nodes[n;
-        cir::CIR::IIndex cond = genExpr(gz, node.data.if_simple.cond, cir::ResLoc::None());
-
-        // then-block
-        cir::CIR::Inst tb{}; tb.tag = cir::CIR::Tag::Block;
-        cir::CIR::IIndex then_blk = gz.emit(tb);
-        GenCir tz = childGen(gz, then_blk, gz.loop_depth, gz.rl);
-        genStmt(tz, node.data.if_simple.then_body);
-        gz.closeBlock(then_blk);
-
-        // else-block (or empty)
-        cir::CIR::Inst eb{}; eb.tag = cir::CIR::Tag::Block;
-        cir::CIR::IIndex else_blk = gz.emit(eb);
-        cir::CIR::IIndex else_body = (node.tag == ast::AST::Tag::IfFull)
-            ? ast_.list(node.data.if_full.branches)[1] : 0;
-        if (else_body) {
-                GenCir ez = childGen(gz, else_blk, gz.loop_depth, gz.rl);
-                genStmt(ez, else_body);
-        }
-        gz.closeBlock(else_blk);
-
-        cir::CIR::Inst cb{}; cb.tag = cir::CIR::Tag::CondBr;
-        cb.data.condbr = { cond, then_blk, else_blk };
-        return gz.emit(cb);
-        }
-
-        cir::CIR::IIndex genWhile(cir::GenCir &gz, ast::AST::NIndex n)
-        {
-            const ast::AST::Node &node = ast_.nodes[n];
-
-            cir::CIR::Inst hb{};
-            hb.tag = cir::CIR::Tag::Block;
-            cir::CIR::IIndex head = gz.emit(hb);
-
-            cir::CIR::IIndex cond = genExpr(gz, node.data.while_stmt.cond, cir::ResLoc::None());
-
-            cir::CIR::Inst bb{};
-            bb.tag = cir::CIR::Tag::Block;
-            cir::CIR::IIndex body_blk = gz.emit(bb);
-            GenCir bz = childGen(gz, /*break=*/head, /*loop=*/gz.loop_depth + 1, cir::ResLoc::None());
-            bz.continue_blk = head;
-            genStmt(bz, node.data.while_stmt.body);
-            gz.closeBlock(body_blk);
-
-            cir::CIR::Inst cb{};
-            cb.tag = cir::CIR::Tag::CondBr;
-            cb.data.condbr = {cond, body_blk, /*exit=*/0};
-            gz.emit(cb);
-
-            gz.closeBlock(head);
-            return head;
-        }
-
-        // ------------------------------------------------------------------
-        // Expressions — Pratt already flattened the shape; we just lower.
-        // ------------------------------------------------------------------
-        cir::CIR::IIndex genExpr(cir::GenCir &gz, ast::AST::NIndex n, cir::ResLoc rl)
-        {
-            const ast::AST::Node &node = ast_.nodes[n];
-            switch (node.tag)
-            {
-            case ast::AST::Tag::IntegerLit:
-            {
-                int64_t v = 0;
-                auto txt = ast_.tokenText(node.token);
-                for (char c : txt)
-                    if (c >= '0' && c <= '9')
-                        v = v * 10 + (c - '0');
-                cir::CIR::IIndex i = emitInt(gz, v);
-                return storeToRl(gz, rl, i);
-            }
-            case ast::AST::Tag::Identifier:
-            {
-                uint32_t name = internName(node.token);
-                cir::CIR::IIndex ref = emitRef(gz, name);
-                // RL::Ref — caller wants the ref; RL::None — caller wants a value.
-                return rl.tag == cir::ResLoc::Tag::Ref ? ref : emitLoad(gz, ref);
-            }
-            case ast::AST::Tag::Binary:
-                return genBinary(gz, n, rl);
-            case ast::AST::Tag::Assign:
-                return genAssign(gz, n);
-            case ast::AST::Tag::Call:
-                return genCall(gz, n, rl);
-            case ast::AST::Tag::Paren:
-                return genExpr(gz, node.data.inner, rl);
-            case ast::AST::Tag::Malformed:
-                return emitErrTok(gz, node.data.malformed.err);
-            default:
-                return emitErrTok(gz, /*ExpectedExpr*/ 0);
-            }
-        }
-
-        cir::CIR::IIndex genBinary(cir::GenCir &gz, ast::AST::NIndex n, cir::ResLoc rl)
-        {
-            const ast::AST::Node &node = ast_.nodes[n];
-            cir::CIR::IIndex lhs = genExpr(gz, node.data.binary.lhs, cir::ResLoc::None());
-            cir::CIR::IIndex rhs = genExpr(gz, node.data.binary.rhs, cir::ResLoc::None());
-
-            cir::CIR::Tag tag = mapBinTag(node.token);
-            cir::CIR::Inst i{};
-            i.tag = tag;
-            i.data.bin = {lhs, rhs};
-            cir::CIR::IIndex out = gz.emit(i);
-            return storeToRl(gz, rl, out);
-        }
-
-        cir::CIR::IIndex genAssign(cir::GenCir &gz, ast::AST::NIndex n)
-        {
-            const ast::AST::Node &node = ast_.nodes[n];
-            cir::CIR::IIndex lhs_ref = genExpr(gz, node.data.binary.lhs, cir::ResLoc::Ref(0));
-            cir::CIR::IIndex rhs = genExpr(gz, node.data.binary.rhs, cir::ResLoc::None());
-            cir::CIR::Inst i{};
-            i.tag = cir::CIR::Tag::Store;
-            i.data.bin = {lhs_ref, rhs};
-            return gz.emit(i);
-        }
-
-        cir::CIR::IIndex genCall(cir::GenCir &gz, ast::AST::NIndex n, cir::ResLoc rl)
-        {
-            const ast::AST::Node &node = ast_.nodes[n];
-            cir::CIR::IIndex callee = genExpr(gz, node.data.call.callee, cir::ResLoc::None());
-            std::vector<uint32_t> args;
-            for (auto a : ast_.list(node.data.call.args))
-                args.push_back(genExpr(gz, a, cir::ResLoc::None()));
-            auto aext = cir_.addList(*gz.body, args);
-
-            cir::CIR::Inst i{};
-            i.tag = cir::CIR::Tag::Call;
-            i.data.call = {callee, aext};
-            cir::CIR::IIndex out = gz.emit(i);
-            return storeToRl(gz, rl, out);
-        }
-
-        // ------------------------------------------------------------------
-        // Result Location
-        // ------------------------------------------------------------------
-        // If `rl` names a slot, emit a Store and return the slot.
-        // Otherwise just return the value inst.
-        cir::CIR::IIndex storeToRl(cir::GenCir &gz, cir::ResLoc rl, cir::CIR::IIndex value)
-        {
-            if (rl.tag == cir::ResLoc::Tag::Ref && rl.ref)
-            {
-                cir::CIR::Inst s{};
-                s.tag = cir::CIR::Tag::Store;
-                s.data.bin = {rl.ref, value};
-                gz.emit(s);
-                return rl.ref;
-            }
-            return value;
-        }
-
-        // ------------------------------------------------------------------
-        // Break/continue target lookup (scope chain)
-        // ------------------------------------------------------------------
-        cir::CIR::IIndex findBreakTarget(cir::GenCir &gz)
-        {
-            for (cir::GenCir *g = &gz; g; g = g->parent)
-                if (g->break_blk)
-                    return g->break_blk;
-            return cir::CIR::INull;
-        }
-        cir::CIR::IIndex findContinueTarget(cir::GenCir &gz)
-        {
-            for (cir::GenCir *g = &gz; g; g = g->parent)
-                if (g->loop_depth > 0 && g->continue_blk)
-                    return g->continue_blk;
-            return cir::CIR::INull;
-        }
-
-        cir::CIR::Tag mapBinTag(ast::AST::TIndex) { return cir::CIR::Tag::Add; } // real: switch on tag
-
-        ast::AST &ast_;
-        cir::CIR cir_;
+        const ast::AST &ast_;
     };
-}
+} // namespace cora
+
+#endif // CORA_AGEN_ASTGEN_H

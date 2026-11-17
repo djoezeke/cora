@@ -210,7 +210,7 @@ namespace cora::cir
 
     core::Digest CIRInput::key() const
     {
-        return core::crypto::SHA256::hash("cora-cir-key-v3\n" + canonical());
+        return crypto::SHA256::hash("cora-cir-key-v3\n" + canonical());
     }
 
     std::vector<std::uint8_t> CIRArtifact::serialize() const

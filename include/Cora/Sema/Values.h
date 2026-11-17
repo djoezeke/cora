@@ -1,8 +1,7 @@
-#ifndef CORA_CIR_CIR_H
-#define CORA_CIR_CIR_H
+#ifndef CORA_SEMA_VALUES_H
+#define CORA_SEMA_VALUES_H
 
 #include <cstdint>
-#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
@@ -10,24 +9,33 @@
 namespace cora::sema
 {
 
-    struct Type
+    struct Value
     {
-        using Id = uint32_t;
-        enum class Tag
+        enum class Tag : uint8_t
         {
+            Invalid,
+            Integer,
+            Floating,
+            Boolean,
+            String,
+            Null
         };
 
-        Tag tag;
-        Id ret = 0;
-        Id pointee = 0;
-        std::vector<Id> params;
-    };
+        Tag tag = Tag::Invalid;
+        std::int64_t integer = 0;
+        double floating = 0.0;
+        bool boolean = false;
+        std::string string;
 
-    struct Types
-    {
-        /* data */
+        [[nodiscard]] static Value integerValue(std::int64_t value)
+        {
+            Value result;
+            result.tag = Tag::Integer;
+            result.integer = value;
+            return result;
+        }
     };
 
 } // namespace cora::sema
 
-#endif // CORA_CIR_CIR_H
+#endif // CORA_SEMA_VALUES_H

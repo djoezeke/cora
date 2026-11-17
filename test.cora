@@ -1,0 +1,12 @@
+struct Loc {
+    x: u32,
+    y: u32,
+}
+
+func main() -> u32 {
+
+
+    mut loc: Loc = Loc { x: 10, y: 20 };
+    
+    return loc.x + loc.y;
+}

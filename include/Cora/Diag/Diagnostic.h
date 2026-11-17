@@ -4,10 +4,11 @@
 #include <Cora/Core/SourceLocation.h>
 
 #include <cstdint>
-#include <string>
 #include <string_view>
-#include <utility>
 #include <vector>
+
+// #include <string>
+// #include <utility>
 
 namespace cora::diag
 {
@@ -176,6 +177,9 @@ public:
     /// The first primary label, or the first label if no primary label exists.
     [[nodiscard]] SourceSpan primary_span() const noexcept;
     [[nodiscard]] SourceSpan span() const noexcept { return span_; }
+    [[nodiscard]] std::uint64_t revision() const noexcept { return revision_; }
+    void set_revision(std::uint64_t revision) noexcept { revision_ = revision; }
+    [[nodiscard]] std::string identity() const;
     void set_span(SourceSpan span) noexcept { span_ = span; }
 
     void set_severity(Severity severity) noexcept { severity_ = severity; }
@@ -255,6 +259,7 @@ public:
 private:
     Severity severity_ = Severity::Error;
     bool severity_resolved_ = false;
+    std::uint64_t revision_ = 0;
     SourceSpan span_{};
     std::string code_;
     std::string message_;

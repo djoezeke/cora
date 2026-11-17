@@ -277,6 +277,7 @@ namespace cora::ast
             return errors.size();
         }
         void dump(std::ostream &out) const;
+        [[nodiscard]] bool validate(std::string *error = nullptr) const;
     };
 
 } // namespace cora::ast

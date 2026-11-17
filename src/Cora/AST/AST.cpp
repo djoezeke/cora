@@ -670,4 +670,39 @@ namespace cora::ast
         (void)listKindName;
     }
 
+    bool AST::validate(std::string *error) const
+    {
+        const auto fail = [error](const char *message)
+        {
+            if (error != nullptr)
+                *error = message;
+            return false;
+        };
+        if (node_first_token.size() != nodes.size() ||
+            node_last_token.size() != nodes.size())
+            return fail("AST node span columns are out of sync");
+        for (std::size_t index = 0; index < nodes.size(); ++index)
+        {
+            const auto first = node_first_token[index];
+            const auto last = node_last_token[index];
+            if (first != Node::TNull &&
+                (first >= tokens.size() || (last != Node::TNull &&
+                                             last >= tokens.size())))
+                return fail("AST node token range is out of bounds");
+            if (first != Node::TNull && last != Node::TNull && first > last)
+                return fail("AST node token range is reversed");
+        }
+        for (const DeclInfo &decl : decls)
+        {
+            if (decl.node != Node::NNull && decl.node >= nodes.size())
+                return fail("AST declaration node is out of bounds");
+            if (decl.node_begin != Node::NNull && decl.node_begin >= nodes.size())
+                return fail("AST declaration node range is out of bounds");
+            if (decl.extra_begin != Node::ENull &&
+                decl.extra_begin >= extra_data.size())
+                return fail("AST declaration extra range is out of bounds");
+        }
+        return true;
+    }
+
 } // namespace cora::ast

@@ -159,4 +159,38 @@ endif()
 
 add_test(NAME CoraParserTests COMMAND CoraParserTests)
 
+add_executable(CoraFrontendTests
+    Cora/Frontend/Frontend.test.cpp
+)
+
+target_include_directories(CoraFrontendTests
+    PRIVATE
+        ${PROJECT_SOURCE_DIR}/include
+)
+
+target_link_libraries(CoraFrontendTests
+    PRIVATE
+        Cora
+        Catch2::Catch2WithMain
+)
+
+target_compile_features(CoraFrontendTests PRIVATE cxx_std_17)
+add_test(NAME CoraFrontendTests COMMAND CoraFrontendTests)
+
+add_executable(CoraSemaTests
+    Cora/Sema/Sema.test.cpp
+)
+target_include_directories(CoraSemaTests PRIVATE ${PROJECT_SOURCE_DIR}/include)
+target_link_libraries(CoraSemaTests PRIVATE Cora Catch2::Catch2WithMain)
+target_compile_features(CoraSemaTests PRIVATE cxx_std_17)
+add_test(NAME CoraSemaTests COMMAND CoraSemaTests)
+
+add_executable(CoraCodeGenTests
+    Cora/CodeGen/CBackend.test.cpp
+)
+target_include_directories(CoraCodeGenTests PRIVATE ${PROJECT_SOURCE_DIR}/include)
+target_link_libraries(CoraCodeGenTests PRIVATE Cora Catch2::Catch2WithMain)
+target_compile_features(CoraCodeGenTests PRIVATE cxx_std_17)
+add_test(NAME CoraCodeGenTests COMMAND CoraCodeGenTests)
+
 # ===================================================================================

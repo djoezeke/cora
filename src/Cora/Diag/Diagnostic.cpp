@@ -1,6 +1,7 @@
 #include <Cora/Diag/Diagnostic.h>
 
 #include <utility>
+#include <string>
 
 namespace cora::diag
 {
@@ -48,6 +49,7 @@ SourceSpan Diagnostic::primary_span() const noexcept
     {
         return span_;
     }
+
     for (const auto &label : labels_)
     {
         if (label.style == LabelStyle::Primary)
@@ -60,6 +62,14 @@ SourceSpan Diagnostic::primary_span() const noexcept
         return labels_.front().span;
     }
     return {};
+}
+
+std::string Diagnostic::identity() const
+{
+    return std::to_string(revision_) + ":" +
+           std::to_string(primary_span().file_id) + ":" +
+           std::to_string(primary_span().start_offset) + ":" +
+           std::to_string(primary_span().end_offset) + ":" + code_;
 }
 
 void Diagnostic::set_code(std::string_view code)
@@ -134,6 +144,7 @@ void Diagnostic::clear()
 {
     severity_ = Severity::Error;
     severity_resolved_ = false;
+    revision_ = 0;
     span_ = {};
     code_.clear();
     message_.clear();

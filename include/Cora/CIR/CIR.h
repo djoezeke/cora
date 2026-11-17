@@ -1,3 +1,8 @@
+/**
+ * @file CIR.h
+ * 
+ * Cora Intermediate Representation.
+ */
 #ifndef CORA_CIR_CIR_H
 #define CORA_CIR_CIR_H
 
@@ -11,30 +16,49 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <unordered_map>
 #include <vector>
 
 namespace cora::cir
 {
+
+    /**
+     * The Header data when CIR is stored in a file.
+     */
+    struct Header {
+
+    };
+
+
     /// The complete CIR for one translation unit.
     struct CIR
     {
+        using IIndex = cir::IIndex;
+        using EIndex = cir::EIndex;
+        using BIndex = cir::BIndex;
+        using TIndex = cir::TIndex;
+
         std::vector<Body> bodies;
         std::vector<std::string> strings;
         std::vector<TypeRefInfo> types;
         std::vector<std::string> errors;
+        /// Stable fingerprints make unchanged top-level bodies reusable.
+        std::vector<core::Digest> declaration_keys;
+        core::Digest source_digest{};
+        std::uint64_t revision = 0;
 
         std::size_t token_count = 0;
         std::size_t line_count = 0;
 
         [[nodiscard]] std::uint32_t internString(std::string_view text)
         {
-            for (std::size_t index = 0; index < strings.size(); ++index)
-            {
-                if (strings[index] == text)
-                    return static_cast<std::uint32_t>(index);
-            }
+            const auto existing = string_indices.find(std::string(text));
+            if (existing != string_indices.end())
+                return existing->second;
             strings.emplace_back(text);
-            return static_cast<std::uint32_t>(strings.size() - 1);
+            const auto index = static_cast<std::uint32_t>(strings.size() - 1);
+            string_indices.emplace(strings.back(), index);
+            return index;
         }
 
         [[nodiscard]] std::string_view string(std::uint32_t index) const noexcept
@@ -76,13 +100,38 @@ namespace cora::cir
             return extraList(body, inst.extra, inst.extra_count);
         }
 
-        [[nodiscard]] const Inst &inst(const Body &body, IIndex index) const noexcept
+        [[nodiscard]] Inst inst(const Body &body, IIndex index) const noexcept
         {
             static const Inst empty{};
             return index < body.insts.size() ? body.insts[index] : empty;
         }
 
         void dump(std::ostream &out) const;
+
+        void clear()
+        {
+            bodies.clear();
+            strings.clear();
+            string_indices.clear();
+            types.clear();
+            errors.clear();
+            declaration_keys.clear();
+            source_digest = {};
+            revision = 0;
+            token_count = 0;
+            line_count = 0;
+        }
+
+    private:
+        std::unordered_map<std::string, std::uint32_t> string_indices;
+    };
+
+    struct CIRIncrementalResult
+    {
+        CIR cir;
+        std::size_t reused_declarations = 0;
+        std::size_t rebuilt_declarations = 0;
+        bool reused_all = false;
     };
 
     /// Everything that influences a CIR artifact. Keeping this explicit makes
