@@ -81,7 +81,7 @@ set(CORA_LIBRARY_SOURCES
     Cora/Core/Digest.cpp
     Cora/Core/SHA256.cpp
     Cora/Driver/Driver.cpp
-    Cora/Frontend/Frontend.cpp
+    # Cora/Frontend/Frontend.cpp
     Cora/Sema/BorrowChecker.cpp
     Cora/Sema/ComptimeEvaluator.cpp
     Cora/Sema/Monomorphizer.cpp

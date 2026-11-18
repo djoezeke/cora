@@ -7,7 +7,7 @@
 #include <string_view>
 #include <vector>
 
-// #include <string>
+#include <string>
 // #include <utility>
 
 namespace cora::diag
