@@ -1,8 +1,20 @@
+#include <array>
+#include <concepts>
+#include <cstdint>
+#include <iostream>
+#include <string>
+#include <type_traits>
+#include <vector>
+
 import "std::fmt::{print, println}";
 import "std::io";
 import "std::math";
 import "std::meta";
 import "std::memory";
+
+// ============================================================================
+// 1. CONSTEXPR & CONSTEVAL FUNCTIONS (C++11 - C++23)
+// ============================================================================
 
 // Flexible. Runs at compile time if inputs are constant, else runtime.
 comptime func compute(x: u32) -> u32 {
@@ -14,7 +26,7 @@ comptime func compute(x: u32) -> u32 {
 }
 
 // Execute at compile time; compiler error otherwise.
-comptime func fnv1a_hash(str: const char*) -> u32 {
+comptime func fnv1a_hash(const char* str) -> u32 {
     let hash: u32 = 2166136261u32;
     while (*str) {
         hash ^= static_cast<uint8_t>(*str++);
@@ -41,6 +53,10 @@ comptime func dual_mode_calc(x: u32) -> u32 {
     }
 }
 
+// ============================================================================
+// 2. CONSTEXPR CLASSES & CONSTRUCTORS (C++11 / C++20)
+// ============================================================================
+
 struct Point {
     x: u32,
     y: u32,
@@ -52,7 +68,7 @@ struct Point {
         }
     }
 
-    comptime const func(p: &Pointer) add(other: const Point&) -> Point {
+    comptime const func(p: &Pointer) operator+(other: const Point&) -> Point {
         return {p.x + other.x, p.y + other.y};
     }
 
@@ -64,45 +80,92 @@ struct Point {
 
 };
 
+// ============================================================================
+// 3. CONSTINIT (C++20)
+// ============================================================================
+
 // Guarantees compile-time initialization (prevents static init order fiasco),
 // but the variable remains MUTABLE at runtime.
-comptime global_counter: u32 = compute(5);
+comptime let global_counter: u32 = compute(5);
+
+// ============================================================================
+// 4. CONSTEXPR LAMBDAS (C++17 / C++20)
+// ============================================================================
 
 // Lambdas are implicitly comptime since C++17 if they meet the rules
-comptime let mul2 := [](n: u32) -> int { 
-    return n * 2;;
+comptime factorial := [](this auto self, n: u32) -> int { // C++23 deducing 'this' recursion
+    return (n <= 1) ? 1 : n * self(n - 1);
 };
+
+// ============================================================================
+// 5. TEMPLATE METAPROGRAMMING, CONCEPTS & IF CONSTEXPR (C++11 - C++20)
+// ============================================================================
 
 // Classic Template Metaprogramming (Value & Type traits)
 struct Fib<N: u32> {
-    comptime pub using value = Fib<N - 1>::value + Fib<N - 2>::value;
+    static comptime value: u32 = Fib<N - 1>::value + Fib<N - 2>::value;
 };
 
-struct Fib<0> { comptime pub using value = 0; };
-struct Fib<1> { comptime pub using value = 1; };
+struct Fib<0> { static comptime value: u32 = 0; };
+struct Fib<1> { static comptime value: u32 = 1; };
 
-// Variable Template
-comptime Fib_v<N>: u32 = Fib<N>::value;
+// C++14 Variable Template
+inline comptime Fib_v<N>: u32 = Fib<N>::value;
 
-// Concepts (Compile-time type constraints)
+// C++20 Concepts (Compile-time type constraints)
 template <typename T>
 concept Arithmetic = std::is_arithmetic_v<T>;
 
-// 'if comptime' (Discards false branches completely at compile time)
-comptime func stringify_or_double<T: Arithmetic>(val: T) {
-    comptime if (std::is_floating_point_v<T>) {
+// C++17 'if comptime' (Discards false branches completely at compile time)
+template <Arithmetic T>
+comptime auto stringify_or_double(T val) {
+    if comptime (std::is_floating_point_v<T>) {
         return val * 2.0; // Discarded if T is int
     } else {
         return val + 100; // Discarded if T is double
     }
 }
 
-// allows literal struct types as template arguments
-comptime func get_point_x<P: Point>() -> u32 {
+// C++17 Fold Expressions (Compile-time variadic pack expansion)
+comptime auto sum_all<typename... Args>(Args... args) {
+    return (args + ... + 0);
+}
+
+// ============================================================================
+// 6. NON-TYPE TEMPLATE PARAMETERS (NTTP) (C++20)
+// ============================================================================
+
+// C++20 allows literal struct types (like std::array or custom structs) as template arguments
+comptime int get_point_x<Point P>() {
     return P.x;
 }
 
+// ============================================================================
+// 7. STATIC_ASSERT & COMPILE-TIME EXECUTION (C++11 / C++17)
+// ============================================================================
+
+// Compile-time unit testing (zero runtime cost)
+static_assert(compute(5) == 15);
+static_assert(fnv1a_hash("hello") == 0x4f9f2cab);
+static_assert(count_even_numbers(10) == 5);
+static_assert(dual_mode_calc(3) == 30); // Calls 'if comptime' branch
+static_assert(factorial(5) == 120);
+static_assert(Fib_v<7> == 13);
+static_assert(stringify_or_double(5) == 105);
+static_assert(stringify_or_double(2.5) == 5.0);
+static_assert(sum_all(1, 2, 3, 4) == 10);
+static_assert(get_point_x<Point{42, 99}>() == 42);
+
 // Immediately Invoked Lambda Expression (IILE) for complex compile-time lookup tables
+comptime lookup_table := []() comptime {
+    std::array<int, 5> arr{};
+    for (int i = 0; i < 5; ++i) {
+        arr[i] = (i + 1) * (i + 1);
+    }
+    return arr;
+}();
+
+static_assert(lookup_table == 16);
 
 // ============================================================================
 // MAIN (RUNTIME VERIFICATION)
@@ -120,6 +183,10 @@ int main() {
     comptime p1: Point = {3, 4};
     comptime p2: Point = p1 + Point{1, 2};
 
+    std::cout << "Constinit global: " << global_counter << "\n";
+    std::cout << "Runtime dual_mode: " << runtime_res << "\n";
+    std::cout << "Constexpr Point mag^2: " << p2.magnitude_sq() << "\n";
+
     return 0;
 }
 
@@ -130,6 +197,9 @@ int main() {
 #include <iostream>
 #include <string_view>
 
+// ============================================================================
+// 1. CUSTOM COMPILE-TIME ERROR TRIGGERS
+// ============================================================================
 
 // Non-comptime functions cannot be called during constant evaluation.
 // Naming them descriptively makes the compiler error act as a custom message!
@@ -147,17 +217,16 @@ struct IPv4 {
 
     // 'comptime' constructor forces all string parsing to happen at compile time!
     // Implicit conversion allows passing string literals directly to functions expecting IPv4.
-    comptime func IPv4(str: const char*) -> IPv4 {
+    comptime func IPv4(const char* str) -> IPv4 {
 
-        let sv: std::string_view = std::string_view(str);
-
-        let octects: std::array<uint32_t, 4> =  {};
+        std::string_view sv(str);
+        std::array<uint32_t, 4> octets{};
 
         let octet_idx: usize = 0;
         let current_val: u32 = 0;
         let has_digits: bool = false;
 
-        for (let c: u8 : sv) {
+        for (char c : sv) {
             if (c >= '0' && c <= '9') {
                 has_digits = true;
                 current_val = current_val * 10 + (c - '0');
@@ -198,7 +267,7 @@ struct IPv4 {
 // 3. ZERO-COST API USAGE
 // ============================================================================
 
-func connect_to_server(IPv4 address) -> void {
+void connect_to_server(IPv4 address) {
     // At runtime, 'address.packed' is already a raw integer constant!
     std::cout << "Connecting to packed IP: 0x" << std::hex << address.packed << "\n";
 }
@@ -226,17 +295,19 @@ func main() -> u32 {
 #include <string_view>
 #include <tuple>
 
+// ============================================================================
+// 1. THE FIXED-STRING WRAPPER (C++20 Structural Type)
+// ============================================================================
+
 struct FixedString<N: usize> {
     data: u8[N],
-
-    using self = &FixedString<N>;
 
     // Implicitly converts string literals ("hello") into FixedString<6>
     comptime func FixedString<N>(const char (&str)[N]) -> FixedString<N> {
         std::copy_n(str, N, data);
     }
 
-    comptime func<N>() view() const {
+    comptime std::string_view view() const {
         return {data, N - 1}; // Exclude null terminator
     }
 };

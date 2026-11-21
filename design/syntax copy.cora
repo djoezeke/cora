@@ -109,20 +109,16 @@ pub enum Token {
 }
 
 // ---------------------------------------------------------------------------
-// Concepts ((the compile-time interface contract))
+// Contract ((the compile-time interface contract))
 // ---------------------------------------------------------------------------
 
-pub concept Speaker<T>(t: const T) {
-    { t.speak() } -> std::convertible_to<str>;
-};
+// 1. Define the Conc (the compile-time interface contract)
+// A `contract` is a `comptime` predicate over types. It answers: "does T
+// provide these functions?" `@hasFunc` is the reflection builtin — it looks
+// at the same free-function set that UFCS resolves against.
 
-pub concept OSpeaker<T> = Speaker<T>;
-
-// 1. Define the Concept (the compile-time interface contract)
-// Any type T satisfies 'Speaker' if calling t.speak() is valid 
-// and returns something convertible to str.
-pub concept Speaker<T> = requires(t: const T) {
-    { t.speak() } -> std::convertible_to<str>;
+pub comptime Speaker<T> (t: const T) -> bool {
+    return @hasFunc("func(*T) speak() -> []u8");
 };
 
 // 2. Define standalone concrete types (No inheritance required!)

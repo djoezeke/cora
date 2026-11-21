@@ -1,0 +1,367 @@
+// =========================================================================
+// §2. C PREPROCESSOR — structured directives
+// =========================================================================
+//
+// `c_define`  : object-like macro; also a safe host-language constant.
+// `c_macro`   : function-like macro; textual; requires `unsafe` at call site.
+// `c_if`      : balanced conditional over the C macro table.
+//               ONLY the taken branch is parsed.
+// `c { ... }` : verbatim embedded C; the only place `#` appears as a token.
+
+c_define LOG_MAX_LINE = 4096;          // usable as a constant AND as a #define
+c_define LOG_VERSION  = "1.0";
+
+// Function-like macros expand textually. Double-eval footgun is preserved,
+// so `unsafe` is required at the call site.
+c_macro CLAMP(v, lo, hi) = ((v) < (lo) ? (lo) : ((v) > (hi) ? (hi) : (v)));
+c_macro STRINGIFY(x)     = #x;
+
+// Platform branch: both branches use the SAME syntax; only the chosen one
+// is even parsed. `file_handle_t` will exist after this statement on both.
+c_if C_defined("_WIN32") {
+    c {
+        #include <windows.h>
+        typedef HANDLE  file_handle_t;
+        typedef DWORD   file_size_t;
+    }
+    c_macro CLOSE_FILE(h) = CloseHandle(h)
+} c_else {
+    c {
+        #include <unistd.h>
+        #include <sys/stat.h>
+        typedef int    file_handle_t;
+        typedef off_t  file_size_t;
+    }
+    c_macro CLOSE_FILE(h) = close(h)
+}
+
+
+// =========================================================================
+// §3. COMPTIME — phase qualifier, not a sub-language
+// =========================================================================
+//
+// `comptime` runs a pure, bounded subset at compilation time.
+// Pure: no I/O, no `extern`, no `unsafe`, no heap.
+// Bounded: step budget, non-termination is a compile error.
+
+fn fib(comptime n: usize) usize {
+    if n < 2 { return n; }
+    return fib(n - 1) + fib(n - 2);
+}
+
+const FIB_TABLE_LEN: usize = 32;
+
+// `comptime for` unrolls the loop and evaluates each iteration at compile time.
+// `'blk:` is a labeled block — `break 'blk value` is the early-exit form.
+comptime const FIB_TABLE: [usize; FIB_TABLE_LEN] = 'blk: {
+    let mut t: [usize; FIB_TABLE_LEN] = @zeroed([usize; FIB_TABLE_LEN]);
+    comptime for i in 0..FIB_TABLE_LEN {
+        t[i] = comptime fib(i);
+    }
+    break 'blk t;
+};
+
+
+// =========================================================================
+// §4. DECLARATIVE MACRO — hygienic, Rust-style
+// =========================================================================
+//
+// `$x:fragment` specifiers are mandatory for captures.
+// Hygiene is the default; call-site identifiers cannot be captured.
+
+macro vec {
+    ($($x:expr),* $(,)?) => {
+        {
+            let mut temp = Vec::new();
+            $( temp.push($x); )*
+            temp
+        }
+    };
+}
+
+
+// =========================================================================
+// §5. TYPES — enums and structs
+// =========================================================================
+
+// Closed enum: exhaustive matching required; adding a variant is a
+// compile error at every `match` site.
+enum LogLevel { Trace, Debug, Info, Warn, Error, Fatal }
+
+// Open enum: parser can see new values from config files or C. Every
+// `match` must provide a `_` catch-all. `..` in the declaration marks it.
+open enum LogKind { Plain, Json, Syslog, .. }
+
+// `#[repr(C)]` makes the layout C-compatible — used for FFI structs.
+#[repr(C)]
+struct LogLine {
+    level:   LogLevel,
+    kind:    LogKind,
+    msg:     []u8,       // owned slice
+    elapsed: u64,        // nanoseconds
+}
+
+
+// =========================================================================
+// §6. CONTRACTS + TEMPLATES — static polymorphism
+// =========================================================================
+//
+// A `contract` is a `comptime` predicate over types. It answers: "does T
+// provide these functions?" `@hasFn` is the reflection builtin — it looks
+// at the same free-function set that UFCS resolves against.
+
+contract Formatter {
+    fn is_satisfied(T: type) bool {
+        return @hasFn("format", fn(*T, LogLine) -> []u8);
+    }
+}
+
+// Two concrete formatter types — no `impl`, no `interface`, no `dyn`.
+struct JsonFormatter  { pretty: bool }
+struct PlainFormatter { prefix: []u8 }
+
+// Free functions. `f.pretty` is a field read; `format(f, line)` is a call.
+// UFCS lets us write `f.format(line)` and it desugars to `format(f, line)`.
+fn format(f: *JsonFormatter,  line: LogLine) -> []u8 { return line.msg; }
+fn format(f: *PlainFormatter, line: LogLine) -> []u8 { return line.msg; }
+
+// `template<F: Formatter>` monomorphizes per concrete type. The contract
+// guarantees `format(f, line)` exists; failure is reported at contract site.
+template<F: Formatter>
+fn format_batch(f: *mut F, lines: []LogLine) -> [][]u8 {
+    let mut out = Vec::new();
+    for line in lines {
+        out.push(f.format(line));     // → format(f, line), checked by contract
+    }
+    return out.to_slice();            // → to_slice(&out)
+}
+
+
+// =========================================================================
+// §7. VTABLES — dynamic polymorphism without trait/dyn/impl
+// =========================================================================
+//
+// A vtable is an ordinary struct of function pointers. A fat pointer is an
+// ordinary struct { *void, *vtable }. Dispatch is an ordinary function call.
+// UFCS means the call site looks identical to a concrete-type call.
+
+struct FormatterVTable {
+    size:    usize,
+    align:   usize,
+    type_id: usize,
+    format:  fn(*const void, LogLine) -> []u8,
+}
+
+struct FormatterRef {
+    data:   *void,
+    vtable: *const FormatterVTable,
+}
+
+// Dispatch shim: an ordinary `fn`. This one line is the entire "method".
+fn format(r: FormatterRef, line: LogLine) -> []u8 {
+    return (r.vtable.format)(r.data, line);
+}
+
+// A vtable constant — comptime-generated by hand (or by `#[derive(...)]`,
+// which is just a `macro fn` producing this exact code).
+comptime const JSON_VTABLE: FormatterVTable = FormatterVTable {
+    size:    @sizeOf(JsonFormatter),
+    align:   @alignOf(JsonFormatter),
+    type_id: @typeId(JsonFormatter),
+    format:  |data, line| format(@ptrCast(*JsonFormatter, data), line),
+};
+
+// Explicit coercion. `as_formatter(&jf)` is required; `&jf` alone does
+// not coerce to `FormatterRef` — that is the whole safety story.
+fn as_formatter(f: *JsonFormatter) FormatterRef {
+    return FormatterRef { data: @ptrCast(*void, f), vtable: &JSON_VTABLE };
+}
+
+
+// =========================================================================
+// §8. PATTERN MACRO — custom patterns, expanded before exhaustiveness
+// =========================================================================
+
+// A `pattern macro` returns a `Pattern` AST. It is fully expanded before
+// the exhaustiveness checker runs, so `not_error!()` participates in
+// reachability the same as an inline or-pattern.
+pattern macro fn not_error() -> Pattern {
+    return quote! { LogLevel::Trace | LogLevel::Debug | LogLevel::Info };
+}
+
+
+// =========================================================================
+// §9. ERROR HANDLING — Result + `?`
+// =========================================================================
+//
+// `?` is the propagation operator. It requires the enclosing function to
+// return `Result<T, E>`. `?` runs deferred actions (Drop, etc.) on the
+// way out — never "returns early without unwinding".
+
+fn read_line(fd: file_handle_t) -> Result<LogLine, ReadError> {
+    let n = unsafe { read_file(fd, buf_ptr(), LOG_MAX_LINE) };
+    if n < 0 { return Err(ReadError::Io); }
+
+    // `?` is usable in any `if let` / `let` expression, because it
+    // desugars to `match ... { Ok(x) => x, Err(e) => return Err(e) }`.
+    let level = parse_level(buf_slice(0, n))?;
+    let kind  = parse_kind(buf_slice(0, n))?;
+
+    return Ok(LogLine { level, kind, msg: buf_slice(0, n).to_vec(), elapsed: 0 });
+}
+
+
+// =========================================================================
+// §10. EXTERN "C" — callable FROM C, using unsafe only where the ABI requires
+// =========================================================================
+
+extern "C" fn log_pipe_version() -> *const u8 {
+    return c"1.0";           // `c"..."` is a NUL-terminated literal
+}
+
+// C calls this with a raw pointer + length. Inside, we validate before
+// touching memory, then drop to `unsafe` only for the pointer walk.
+extern "C" fn log_pipe_process(line: *const u8, len: usize) -> i32 {
+    // Null + zero-length guards are the C-ABI contract.
+    if line.is_null() || len == 0 { return -1; }
+
+    // Unsafe block: reading through a C-provided pointer.
+    let mut buf = Vec::with_capacity(len);
+    unsafe {
+        for i in 0..len {
+            buf.push(*line.add(i));
+        }
+    }
+
+    let ll = LogLine {
+        level:   LogLevel::Info,
+        kind:    LogKind::Plain,
+        msg:     buf.to_slice(),
+        elapsed: 0,
+    };
+
+    // Dynamic dispatch through the vtable — looks like a normal call.
+    let mut jf = JsonFormatter { pretty: false };
+    let r = as_formatter(&mut jf);
+    let out = format(r, ll);          // → format(r, ll) → (r.vtable.format)(r.data, ll)
+
+    // Unsafe block: writing to C stdio.
+    unsafe {
+        stdio.fwrite(out.ptr as *const _, 1, out.len, stdio.stdout);
+        stdio.fflush(stdio.stdout);
+    }
+    return 0;
+}
+
+
+// =========================================================================
+// §11. MAIN — full control-flow showcase
+// =========================================================================
+
+fn main(argc: i32, argv: **u8) -> i32 {
+
+    // ---- if-let-chain: `&&` combines refutable `let` with booleans ----
+    // The desugaring is right-nested `if let`; short-circuit is preserved.
+    if argc >= 2
+        && let Some(path) = arg_at(argv, 1)
+        && path.len > 0
+    {
+        process_file(path);
+    } else {
+        // No `else if` needed; absence of chain success falls here.
+        eprint("usage: logpipe <file>");
+        return 1;
+    }
+
+    // ---- labeled block: value-producing early exit ----
+    // The label lets `break 'blk value` short-circuit the block without
+    // returning from the enclosing function. `budget` ends up as `usize`.
+    let budget: usize = 'blk: {
+        let raw = compute_budget();
+        if raw < 10      { break 'blk 10; }
+        if raw > 10_000  { break 'blk 10_000; }
+        raw
+    };
+
+    // ---- comptime if: only the taken branch is compiled ----
+    // Here both branches use `format_batch` monomorphized for a different
+    // type; only one gets code-generated at build time.
+    comptime if FIB_TABLE[10] > 100 {
+        let mut jf = JsonFormatter { pretty: true };
+        let _ = format_batch(&mut jf, initial_batch());
+    } else {
+        let mut pf = PlainFormatter { prefix: c"log> " };
+        let _ = format_batch(&mut pf, initial_batch());
+    }
+
+    // ---- labeled outer loop, `while let` with a boolean condition ----
+    // `'outer: while let` — break 'outer exits BOTH loops at once.
+    'outer: while let Some(batch) = next_batch() {
+        for line in batch {
+            // Pattern macro `not_error!()` expands to
+            //   LogLevel::Trace | LogLevel::Debug | LogLevel::Info
+            // BEFORE exhaustiveness checking — it counts as real coverage.
+            match line.level {
+                not_error!()                        => {}
+                LogLevel::Warn                      => { log_warn(line); }
+                LogLevel::Error | LogLevel::Fatal   => {
+                    report(line);
+                    break 'outer;                    // stop on first error
+                }
+            }
+        }
+    }
+
+    // ---- `loop` with a value, labeled block, break-with-value ----
+    // Every `break` arm must agree on the type (`i32` here).
+    let retries: i32 = loop {
+        if try_flush()        { break 0; }
+        if budget == 0        { break -1; }
+        budget -= 1;
+    };
+
+    // ---- `for` over a range, `continue` on a predicate ----
+    for i in 0..retries {
+        if is_retry_blackout(i) { continue; }
+        retry_flush(i);
+    }
+
+    // ---- `comptime while` with explicit bound ----
+    // Evaluated during compilation; must terminate under the step budget.
+    comptime const MAX_TAG_LEN = 'blk: {
+        let mut n: usize = 0;
+        comptime while FIB_TABLE[n] < 1000 { n += 1; }
+        break 'blk n;
+    };
+
+    // ---- final: return through every exit path with `?` ----
+    return finish(retries);
+}
+
+
+// =========================================================================
+// §12. Helper stubs (declarations only; body omitted)
+// =========================================================================
+//
+// These exist so the sections above compile in isolation. Each would be
+// implemented in a real program using the same primitives demonstrated.
+
+fn arg_at(argv: **u8, i: usize) -> Option<[]u8>          { return None; }
+fn process_file(path: []u8)                             { }
+fn compute_budget() -> usize                            { return 0; }
+fn initial_batch() -> []LogLine                         { return []; }
+fn next_batch() -> Option<[]LogLine>                    { return None; }
+fn report(line: LogLine)                                { }
+fn log_warn(line: LogLine)                              { }
+fn try_flush() -> bool                                  { return true; }
+fn retry_flush(i: i32)                                  { }
+fn is_retry_blackout(i: i32) -> bool                    { return false; }
+fn finish(retries: i32) -> i32                          { return retries; }
+fn read_file(fd: file_handle_t, buf: *mut u8, n: usize) -> i64 { return 0; }
+fn parse_level(bytes: []u8) -> Result<LogLevel, ReadError> { return Ok(LogLevel::Info); }
+fn parse_kind(bytes: []u8) -> Result<LogKind, ReadError>   { return Ok(LogKind::Plain); }
+fn buf_ptr() -> *mut u8                                 { return @null; }
+fn buf_slice(start: usize, end: usize) -> []u8          { return []; }
+fn eprint(s: []u8)                                      { }
+fn eprint_bytes(s: []u8)                                { }
+

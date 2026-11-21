@@ -14,9 +14,8 @@
        "..."    terminal string
        ? ... ?  special sequence (described informally)
 
-   The grammar uses C++, Rust, Zig, and Go as design references.  It is a
-   specification of the intended surface language; the notes at the end of
-   each section record the few places where a parser needs context-sensitive
+   The grammar is specification of the intended surface language; the notes at the
+   end of each section record the few places where a parser needs context-sensitive
    disambiguation (generic angle brackets, struct initializers, and blocks).
 
    ========================================================================== *)
