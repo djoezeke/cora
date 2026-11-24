@@ -1,0 +1,79 @@
+
+struct complex<T> {
+    real: T, //! The real part.
+    imag: T, //! The imaginary part.
+
+    using self = &complex<T>;
+    using value = T;
+
+    /*!
+     * @brief Create a new complex number.
+     * @param real the real part of the complex number.
+     * @param imag the imaginary part of the complex number.
+     * @return A new complex number.
+     */
+    pub func complex(real: T, imag: T) -> self {
+        return self {
+            real: real,
+            imag: imag,
+        };
+    };
+
+    //! Returns the real part.
+    pub func(c: self) real() -> &value {
+        return c.real;
+    };
+
+    //! Return the imaginary part.
+    pub func(c: self) imag() -> &value {
+        return c.imag;
+    };
+
+    /*!
+     * @brief Returns the sum of two complex numbers.
+     * @param other the other complex number.
+     * @return The sum of the two complex numbers.
+     */
+    pub func(c: self) add(other: self) -> self {
+        return self {
+            real: self.real + other.real,
+            imag: self.imag + other.imag,
+        };
+    };
+
+    /*!
+     * @brief Returns the subtraction of two complex numbers.
+     * @param other the other complex number.
+     * @return The subtraction of the two complex numbers.
+     */
+    pub func(c: self) sub(other: self) -> self {
+        return self {
+            real: self.real - other.real,
+            imag: self.imag - other.imag,
+        };
+    };
+
+    /*!
+     * @brief Returns the product of two complex numbers.
+     * @param other the other complex number.
+     * @return The product of the two complex numbers.
+     */
+    pub func(c: self) mul(other: self) -> self {
+        return self {
+            real: self.real * other.real,
+            imag: self.imag * other.imag,
+        };
+    };
+
+    /*!
+     * @brief  Returns the quotient of two complex numbers.
+     * @param other the other complex number.
+     * @return The quotient of the two complex numbers.
+     */
+    pub func(c: self) div(other: self) -> self {
+        return self {
+            real: self.real / other.real,
+            imag: self.imag / other.imag,
+        };
+    };
+}

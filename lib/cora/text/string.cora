@@ -1,0 +1,26 @@
+comptime if(requires_hosted()){
+    error!("This library is not available in freestanding mode")
+}
+
+/*!
+ *
+ *
+ */
+struct string<C, A: Allocator> {
+
+    using self = &string<C, A>;
+    pub using ptr = C;
+    pub using ref = C;
+    pub using char = C;
+    pub using size = usize;
+    pub using altor = A;
+
+}
+
+//! Ascii
+pub using str<A: Alocator> = string<u7, A>;
+
+//! 
+pub using u8str<A: Alocator> = string<u8, A>;
+pub using u16str<A: Alocator> = string<u16, A>;
+pub using u32str<A: Alocator> = string<u32, A>;

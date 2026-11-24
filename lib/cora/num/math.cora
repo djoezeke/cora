@@ -1,0 +1,4 @@
+
+pub comptime func cos<T>(x: T) -> T {
+    
+}

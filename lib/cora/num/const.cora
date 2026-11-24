@@ -1,0 +1,18 @@
+
+macro func num_const(Type, Suffix) {
+    
+}
+
+using e_v<T: float> = 
+
+//! Euler's number (e)
+pub comptime const e := 2.718281828459045235360287471353;
+
+//! Archimedes' constant (π)
+pub comptime const pi := 3.141592653589793238462643383279;
+
+//! Phi or Golden ratio constant (Φ) = (1 + sqrt(5))/2
+pub comptime const phi := 1.618033988749894848204586834365;
+
+//! Circle constant (τ)
+pub comptime const tau := 2 * pi;
