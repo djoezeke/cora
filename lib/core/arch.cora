@@ -1,1 +1,188 @@
+/*!
+ * @file arch.cora
+ * @brief Target architecture and platform-independent CPU helpers.
+ *
+ * The constants in this file describe the machine selected while compiling the
+ * program.  Code that needs a target-specific implementation should hide it
+ * behind one of the small helpers declared here rather than scattering target
+ * checks throughout the library.
+ */
 
+/*!
+ * @brief Processor families understood by the core library.
+ */
+pub enum Arch {
+    Unknown,   //!< An architecture not described by this library.
+    X86,       //!< 32-bit x86.
+    X86_64,    //!< 64-bit x86.
+    Arm,       //!< 32-bit ARM.
+    AArch64,   //!< 64-bit ARM.
+    RiscV32,   //!< 32-bit RISC-V.
+    RiscV64,   //!< 64-bit RISC-V.
+    Wasm32,    //!< 32-bit WebAssembly.
+}
+
+/*!
+ * @brief Byte order of the target.
+ */
+pub enum Endian {
+    Little,  //!< Least significant byte first.
+    Big,     //!< Most significant byte first.
+}
+
+/*!
+ * @brief A compact description of the compilation target.
+ */
+pub struct Target {
+    pub arch: Arch,           //!< Processor family.
+    pub endian: Endian,       //!< Native byte order.
+    pub pointer_width: usize, //!< Pointer width in bits.
+    pub is_hosted: bool,      //!< Whether an operating system is present.
+
+    /*!
+     * @brief Creates a target description.
+     * @param arch Processor family.
+     * @param endian Native byte order.
+     * @param pointer_width Pointer width in bits.
+     * @param is_hosted Whether the target is hosted.
+     * @return A target description.
+     */
+    pub func Target(arch: Arch, endian: Endian, pointer_width: usize,
+                    is_hosted: bool) -> Target {
+        return Target {
+            arch: arch,
+            endian: endian,
+            pointer_width: pointer_width,
+            is_hosted: is_hosted,
+        };
+    }
+}
+
+//! Width of a pointer in bytes on this target.
+pub comptime const pointer_size: usize = sizeof(*mut void);
+
+//! Width of a pointer in bits on this target.
+pub comptime const pointer_bits: usize = pointer_size * 8;
+
+//! Cache-line size assumed by alignment-sensitive algorithms.
+pub comptime const cache_line_size: usize = 64;
+
+//! Default virtual-memory page size used by hosted targets.
+pub comptime const page_size: usize = 4096;
+
+//! Natural register width in bytes.
+pub comptime const register_size: usize = pointer_size;
+
+//! Smallest addressable unit of memory.
+pub comptime const byte_size: usize = 1;
+
+/*!
+ * @brief Returns the native byte order.
+ * @return `Endian::Little` or `Endian::Big`.
+ */
+pub func native_endian() -> Endian {
+    let value: u16 = 1;
+    let bytes := &value as *const u8;
+    if (bytes[0] == 1) {
+        return Endian::Little;
+    }
+    return Endian::Big;
+}
+
+/*!
+ * @brief Returns `true` when the target is little endian.
+ * @return Native byte-order test.
+ */
+pub func is_little_endian() -> bool {
+    return native_endian() == Endian::Little;
+}
+
+/*!
+ * @brief Returns `true` when the target is big endian.
+ * @return Native byte-order test.
+ */
+pub func is_big_endian() -> bool {
+    return native_endian() == Endian::Big;
+}
+
+/*!
+ * @brief Returns the processor family selected for this build.
+ *
+ * The core library uses `Arch::Unknown` when the target was not described by
+ * this file.  Platform layers may refine the answer at run time.
+ *
+ * @return The current processor family.
+ */
+pub func current_arch() -> Arch {
+    return Arch::Unknown;
+}
+
+/*!
+ * @brief Returns a description of the current target.
+ * @return Target metadata assembled from compile-time constants.
+ */
+pub func current_target() -> Target {
+    return Target {
+        arch: current_arch(),
+        endian: native_endian(),
+        pointer_width: pointer_bits,
+        is_hosted: true,
+    };
+}
+
+/*!
+ * @brief Emits a CPU-specific spin-loop hint.
+ *
+ * The helper is safe to call from any context.  A target without a dedicated
+ * pause instruction simply performs a compiler barrier.
+ */
+pub func cpu_relax() -> void {
+    // The runtime supplies an optimized implementation when one is available.
+    cora_cpu_relax();
+}
+
+/*!
+ * @brief Triggers a debugger breakpoint when supported by the host.
+ */
+pub func breakpoint() -> void {
+    cora_breakpoint();
+}
+
+/*!
+ * @brief Hints that a branch is usually taken.
+ * @param condition The branch condition.
+ * @return `condition` unchanged.
+ */
+pub func likely(condition: bool) -> bool {
+    return condition;
+}
+
+/*!
+ * @brief Hints that a branch is rarely taken.
+ * @param condition The branch condition.
+ * @return `condition` unchanged.
+ */
+pub func unlikely(condition: bool) -> bool {
+    return condition;
+}
+
+/*!
+ * @brief Reads the target timestamp counter when available.
+ *
+ * The value is monotonically increasing on supported targets but its unit is
+ * implementation-defined.  Use `core::time` for portable measurements.
+ *
+ * @return A target-specific cycle or tick count.
+ */
+pub func read_cycle_counter() -> u64 {
+    return cora_read_cycle_counter();
+}
+
+[[link_name("cora_arch_cpu_relax")]]
+extern "C" func cora_cpu_relax() -> void;
+
+[[link_name("cora_arch_breakpoint")]]
+extern "C" func cora_breakpoint() -> void;
+
+[[link_name("cora_arch_read_cycle_counter")]]
+extern "C" func cora_read_cycle_counter() -> u64;

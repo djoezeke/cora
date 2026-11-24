@@ -1,1 +1,12 @@
+/*!
+ * @file lib.cora
+ * @brief Core memory management entry point.
+ *
+ * Re-exports the allocator interface, raw memory operations, and pointer
+ * utilities.  Freestanding programs can depend on this module without pulling
+ * in any hosted operating-system services.
+ */
 
+import "core::mem::alloc";
+import "core::mem::mem";
+import "core::mem::ptr";

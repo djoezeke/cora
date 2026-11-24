@@ -1,0 +1,471 @@
+/*!
+ * @file random.cora
+ * @brief Deterministic pseudo-random number engines.
+ *
+ * The engines in this module are small, allocation-free value types.  They
+ * implement the `RandomSource` concept and are suitable for simulations,
+ * sampling, and procedural generation.  They are *not* cryptographically
+ * secure; cryptographic randomness lives in `cora::crypto::rand`.
+ */
+
+import "core::type";
+
+/*!
+ * @brief Operations implemented by a pseudo-random engine.
+ * @tparam T The engine type.
+ */
+pub concept RandomSource<T> = requires(source: &mut T, buffer: *mut u8,
+                                      count: usize) {
+    { source.next_u32() } -> u32;
+    { source.next_u64() } -> u64;
+    { source.fill_bytes(buffer, count) } -> void;
+};
+
+/*!
+ * @brief Reasons a random request may fail.
+ */
+pub enum RandomError {
+    InvalidRange,      //!< The requested range is empty.
+    InvalidSeed,       //!< The supplied seed cannot initialize the engine.
+    EntropyUnavailable,//!< The platform entropy source is not available.
+};
+
+/*!
+ * @brief The SplitMix64 pseudo-random engine.
+ *
+ * SplitMix64 is a small generator with a 64-bit state.  It is especially
+ * useful for expanding a single seed into the larger state of another engine.
+ */
+pub struct SplitMix64 {
+    state: u64,
+
+    /*!
+     * @brief Creates an engine from a seed.
+     * @param seed The initial state.
+     * @return A seeded SplitMix64 engine.
+     */
+    pub func SplitMix64(seed: u64) -> SplitMix64 {
+        return SplitMix64 { state: seed };
+    }
+
+    /*!
+     * @brief Returns the next 64-bit value.
+     * @return A uniformly distributed 64-bit value.
+     */
+    pub func(self: &mut SplitMix64) next_u64() -> u64 {
+        self.state += 0x9E3779B97F4A7C15;
+        let mut value := self.state;
+        value = (value ^ (value >> 30)) * 0xBF58476D1CE4E5B9;
+        value = (value ^ (value >> 27)) * 0x94D049BB133111EB;
+        return value ^ (value >> 31);
+    }
+
+    /*!
+     * @brief Returns the next 32-bit value.
+     * @return A uniformly distributed 32-bit value.
+     */
+    pub func(self: &mut SplitMix64) next_u32() -> u32 {
+        return (self.next_u64() >> 32) as u32;
+    }
+
+    /*!
+     * @brief Returns a value uniformly distributed in `[0, bound)`.
+     * @param bound The exclusive upper bound; zero returns zero.
+     * @return A bounded random value.
+     */
+    pub func(self: &mut SplitMix64) next_bounded(bound: u64) -> u64 {
+        if (bound == 0) {
+            return 0;
+        }
+        let threshold := ((~bound) + 1) % bound;
+        while (true) {
+            let value := self.next_u64();
+            if (value >= threshold) {
+                return value % bound;
+            }
+        }
+    }
+
+    /*!
+     * @brief Returns a value in the half-open range `[0.0, 1.0)`.
+     * @return A double-precision random value.
+     */
+    pub func(self: &mut SplitMix64) next_f64() -> f64 {
+        return (self.next_u64() >> 11) as f64 *
+               (1.0 / 9007199254740992.0);
+    }
+
+    /*!
+     * @brief Returns a value in the half-open range `[0.0, 1.0)`.
+     * @return A single-precision random value.
+     */
+    pub func(self: &mut SplitMix64) next_f32() -> f32 {
+        return (self.next_u32() >> 8) as f32 * (1.0 / 16777216.0);
+    }
+
+    /*!
+     * @brief Fills a byte buffer with random data.
+     * @param buffer The destination buffer.
+     * @param count The number of bytes to write.
+     */
+    pub func(self: &mut SplitMix64) fill_bytes(buffer: *mut u8,
+                                               count: usize) -> void {
+        let mut offset := 0;
+        while (offset < count) {
+            let value := self.next_u64();
+            let mut byte := 0;
+            while (byte < 8 && offset < count) {
+                buffer[offset] = ((value >> (byte * 8)) & 0xFF) as u8;
+                offset += 1;
+                byte += 1;
+            }
+        }
+    }
+
+    /*!
+     * @brief Replaces the engine state.
+     * @param seed The new state.
+     */
+    pub func(self: &mut SplitMix64) reseed(seed: u64) -> void {
+        self.state = seed;
+    }
+
+    /*!
+     * @brief Returns the current raw state.
+     * @return The 64-bit engine state.
+     */
+    pub func(self: &SplitMix64) state() -> u64 {
+        return self.state;
+    }
+}
+
+/*!
+ * @brief A 32-bit permuted congruential generator (PCG-XSH-RR).
+ *
+ * PCG32 has a 64-bit state and a user-selected stream selector.  Two engines
+ * with the same seed but different sequences produce independent streams.
+ */
+pub struct Pcg32 {
+    state: u64,
+    increment: u64,
+
+    /*!
+     * @brief Creates a generator from a seed and a sequence selector.
+     * @param seed The initial state.
+     * @param sequence The stream selector.
+     * @return A seeded PCG32 engine.
+     */
+    pub func Pcg32(seed: u64, sequence: u64) -> Pcg32 {
+        let mut engine := Pcg32 {
+            state: 0,
+            increment: (sequence << 1) | 1,
+        };
+        engine.next_u32();
+        engine.state += seed;
+        engine.next_u32();
+        return engine;
+    }
+
+    /*!
+     * @brief Advances the generator and returns the next 32-bit value.
+     * @return A uniformly distributed 32-bit value.
+     */
+    pub func(self: &mut Pcg32) next_u32() -> u32 {
+        let previous := self.state;
+        self.state = previous * 6364136223846793005 + self.increment;
+        let xorshifted := (((previous >> 18) ^ previous) >> 27) as u32;
+        let rotation := (previous >> 59) as u32;
+        if (rotation == 0) {
+            return xorshifted;
+        }
+        return (xorshifted >> rotation) |
+               (xorshifted << (32 - rotation));
+    }
+
+    /*!
+     * @brief Returns the next 64-bit value assembled from two draws.
+     * @return A uniformly distributed 64-bit value.
+     */
+    pub func(self: &mut Pcg32) next_u64() -> u64 {
+        let high := self.next_u32() as u64;
+        let low := self.next_u32() as u64;
+        return (high << 32) | low;
+    }
+
+    /*!
+     * @brief Returns a value uniformly distributed in `[0, bound)`.
+     * @param bound The exclusive upper bound; zero returns zero.
+     * @return A bounded random value.
+     */
+    pub func(self: &mut Pcg32) next_bounded(bound: u64) -> u64 {
+        if (bound == 0) {
+            return 0;
+        }
+        let threshold := ((~bound) + 1) % bound;
+        while (true) {
+            let value := self.next_u64();
+            if (value >= threshold) {
+                return value % bound;
+            }
+        }
+    }
+
+    /*!
+     * @brief Returns a value in the half-open range `[0.0, 1.0)`.
+     * @return A double-precision random value.
+     */
+    pub func(self: &mut Pcg32) next_f64() -> f64 {
+        return (self.next_u64() >> 11) as f64 *
+               (1.0 / 9007199254740992.0);
+    }
+
+    /*!
+     * @brief Fills a byte buffer with random data.
+     * @param buffer The destination buffer.
+     * @param count The number of bytes to write.
+     */
+    pub func(self: &mut Pcg32) fill_bytes(buffer: *mut u8,
+                                          count: usize) -> void {
+        let mut offset := 0;
+        while (offset < count) {
+            let value := self.next_u64();
+            let mut byte := 0;
+            while (byte < 8 && offset < count) {
+                buffer[offset] = ((value >> (byte * 8)) & 0xFF) as u8;
+                offset += 1;
+                byte += 1;
+            }
+        }
+    }
+
+    /*!
+     * @brief Replaces the engine state.
+     * @param seed The new state.
+     */
+    pub func(self: &mut Pcg32) reseed(seed: u64) -> void {
+        self.state = seed;
+        self.next_u32();
+    }
+}
+
+/*!
+ * @brief The xoshiro256** pseudo-random engine.
+ *
+ * The state is four 64-bit words and the period is `2^256 - 1`.  It is a good
+ * default choice for simulations that need a long stream and fast generation.
+ */
+pub struct Xoshiro256 {
+    state: u64[4],
+
+    /*!
+     * @brief Creates an engine by expanding a seed with SplitMix64.
+     * @param seed The seed for the engine.
+     * @return A seeded xoshiro256** engine.
+     */
+    pub func Xoshiro256(seed: u64) -> Xoshiro256 {
+        let mut mixer := SplitMix64(seed);
+        let mut state: u64[4] = [0; 4];
+        let mut index := 0;
+        while (index < 4) {
+            state[index] = mixer.next_u64();
+            index += 1;
+        }
+        return Xoshiro256 { state: state };
+    }
+
+    /*!
+     * @brief Rotates a 64-bit value left.
+     * @param value The value to rotate.
+     * @param amount The rotation amount.
+     * @return The rotated value.
+     */
+    func rotate_left(value: u64, amount: u32) -> u64 {
+        if (amount == 0) {
+            return value;
+        }
+        return (value << amount) | (value >> (64 - amount));
+    }
+
+    /*!
+     * @brief Returns the next 64-bit value.
+     * @return A uniformly distributed 64-bit value.
+     */
+    pub func(self: &mut Xoshiro256) next_u64() -> u64 {
+        let result := Xoshiro256::rotate_left(self.state[1] * 5, 7) * 9;
+        let temporary := self.state[1] << 17;
+
+        self.state[2] ^= self.state[0];
+        self.state[3] ^= self.state[1];
+        self.state[1] ^= self.state[2];
+        self.state[0] ^= self.state[3];
+        self.state[2] ^= temporary;
+        self.state[3] = Xoshiro256::rotate_left(self.state[3], 45);
+        return result;
+    }
+
+    /*!
+     * @brief Returns the next 32-bit value.
+     * @return A uniformly distributed 32-bit value.
+     */
+    pub func(self: &mut Xoshiro256) next_u32() -> u32 {
+        return (self.next_u64() >> 32) as u32;
+    }
+
+    /*!
+     * @brief Returns a value uniformly distributed in `[0, bound)`.
+     * @param bound The exclusive upper bound; zero returns zero.
+     * @return A bounded random value.
+     */
+    pub func(self: &mut Xoshiro256) next_bounded(bound: u64) -> u64 {
+        if (bound == 0) {
+            return 0;
+        }
+        let threshold := ((~bound) + 1) % bound;
+        while (true) {
+            let value := self.next_u64();
+            if (value >= threshold) {
+                return value % bound;
+            }
+        }
+    }
+
+    /*!
+     * @brief Returns a value in the half-open range `[0.0, 1.0)`.
+     * @return A double-precision random value.
+     */
+    pub func(self: &mut Xoshiro256) next_f64() -> f64 {
+        return (self.next_u64() >> 11) as f64 *
+               (1.0 / 9007199254740992.0);
+    }
+
+    /*!
+     * @brief Fills a byte buffer with random data.
+     * @param buffer The destination buffer.
+     * @param count The number of bytes to write.
+     */
+    pub func(self: &mut Xoshiro256) fill_bytes(buffer: *mut u8,
+                                               count: usize) -> void {
+        let mut offset := 0;
+        while (offset < count) {
+            let value := self.next_u64();
+            let mut byte := 0;
+            while (byte < 8 && offset < count) {
+                buffer[offset] = ((value >> (byte * 8)) & 0xFF) as u8;
+                offset += 1;
+                byte += 1;
+            }
+        }
+    }
+
+    /*!
+     * @brief Replaces the engine state.
+     * @param seed The new seed.
+     */
+    pub func(self: &mut Xoshiro256) reseed(seed: u64) -> void {
+        let mut mixer := SplitMix64(seed);
+        let mut index := 0;
+        while (index < 4) {
+            self.state[index] = mixer.next_u64();
+            index += 1;
+        }
+    }
+}
+
+/*!
+ * @brief Returns a value uniformly distributed in `[0, bound)`.
+ * @tparam T A pseudo-random engine.
+ * @param source The engine to draw from.
+ * @param bound The exclusive upper bound; zero returns zero.
+ * @return A bounded random value.
+ */
+pub func bounded<T: RandomSource>(source: &mut T, bound: u64) -> u64 {
+    if (bound == 0) {
+        return 0;
+    }
+    let threshold := ((~bound) + 1) % bound;
+    while (true) {
+        let value := source.next_u64();
+        if (value >= threshold) {
+            return value % bound;
+        }
+    }
+}
+
+/*!
+ * @brief Returns a value in the half-open range `[0.0, 1.0)`.
+ * @tparam T A pseudo-random engine.
+ * @param source The engine to draw from.
+ * @return A double-precision random value.
+ */
+pub func unit_f64<T: RandomSource>(source: &mut T) -> f64 {
+    return (source.next_u64() >> 11) as f64 * (1.0 / 9007199254740992.0);
+}
+
+/*!
+ * @brief Returns a value in the half-open range `[0.0, 1.0)`.
+ * @tparam T A pseudo-random engine.
+ * @param source The engine to draw from.
+ * @return A single-precision random value.
+ */
+pub func unit_f32<T: RandomSource>(source: &mut T) -> f32 {
+    return (source.next_u32() >> 8) as f32 * (1.0 / 16777216.0);
+}
+
+/*!
+ * @brief Shuffles a mutable array in place using Fisher-Yates.
+ * @tparam T The element type.
+ * @tparam R A pseudo-random engine.
+ * @param values The array to shuffle.
+ * @param count The number of elements.
+ * @param source The engine to draw from.
+ */
+pub func shuffle<T, R: RandomSource>(values: *mut T, count: usize,
+                                     source: &mut R) -> void {
+    if (count < 2) {
+        return;
+    }
+    let mut index := count - 1;
+    while (index > 0) {
+        let selected := bounded<R>(source, (index + 1) as u64) as usize;
+        let temporary := values[index];
+        values[index] = values[selected];
+        values[selected] = temporary;
+        index -= 1;
+    }
+}
+
+/*!
+ * @brief Selects an index in `[0, count)`.
+ * @tparam R A pseudo-random engine.
+ * @param count The number of candidates.
+ * @param source The engine to draw from.
+ * @return The selected index, or zero when `count` is zero.
+ */
+pub func choose_index<R: RandomSource>(count: usize,
+                                       source: &mut R) -> usize {
+    if (count == 0) {
+        return 0;
+    }
+    return bounded<R>(source, count as u64) as usize;
+}
+
+/*!
+ * @brief Selects a boolean with the given probability.
+ * @tparam R A pseudo-random engine.
+ * @param source The engine to draw from.
+ * @param probability The probability of `true`, clamped to `[0, 1]`.
+ * @return The selected boolean.
+ */
+pub func bernoulli<T: RandomSource>(source: &mut T,
+                                    probability: f64) -> bool {
+    if (probability <= 0.0) {
+        return false;
+    }
+    if (probability >= 1.0) {
+        return true;
+    }
+    return unit_f64<T>(source) < probability;
+}
+
+//! The engine recommended for most non-cryptographic uses.
+pub using DefaultRandom = Xoshiro256;

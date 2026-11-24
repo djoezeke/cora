@@ -1,0 +1,17 @@
+/*!
+ * @file lib.cora
+ * @brief Hosted numeric library entry point.
+ *
+ * The numeric tree combines the platform-independent vector type from
+ * `core::simd` with hosted conveniences: complex numbers, mathematical
+ * constants, numeric limits, bit manipulation, portable transcendental
+ * functions, pseudo-random engines, and single-precision vector helpers.
+ */
+
+import "cora::num::complex";
+import "cora::num::const";
+import "cora::num::limits";
+import "cora::num::bits";
+import "cora::num::math";
+import "cora::num::random";
+import "cora::num::simd";

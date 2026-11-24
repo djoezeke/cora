@@ -1,0 +1,10 @@
+/*!
+ * @file lib.cora
+ * @brief Core synchronization entry point.
+ *
+ * Provides atomics, memory ordering, and the basic spin lock used by the rest
+ * of the freestanding core library.
+ */
+
+import "core::sync::atomic";
+import "core::sync::spin";

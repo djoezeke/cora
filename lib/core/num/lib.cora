@@ -1,1 +1,453 @@
+/*!
+ * @file lib.cora
+ * @brief Numeric primitives, ranges, and checked arithmetic helpers.
+ *
+ * The core numeric module is deliberately platform independent.  It provides
+ * generic ordering helpers, integer utilities, and checked/saturating
+ * operations for the fixed-width integer types.  Floating-point constants and
+ * transcendental functions live in the hosted `cora::num` modules.
+ */
 
+import "core::arch";
+import "core::type";
+
+/*!
+ * @brief Operations required of a numeric type.
+ * @tparam T The numeric type.
+ */
+pub concept Numeric<T> = requires(a: T, b: T) {
+    { a + b } -> T;
+    { a - b } -> T;
+    { a * b } -> T;
+    { a / b } -> T;
+    { a < b } -> bool;
+    { a == b } -> bool;
+};
+
+/*!
+ * @brief Operations required of an integer type.
+ * @tparam T The integer type.
+ */
+pub concept Integer<T> = requires(a: T, b: T) {
+    { a & b } -> T;
+    { a | b } -> T;
+    { a ^ b } -> T;
+    { a << b } -> T;
+    { a >> b } -> T;
+};
+
+/*!
+ * @brief Reasons a numeric operation may fail.
+ */
+pub enum NumericError {
+    Overflow,       //!< The result does not fit in the destination type.
+    DivideByZero,   //!< A division or remainder used zero as the divisor.
+    InvalidArgument,//!< An argument is outside the accepted domain.
+}
+
+/*!
+ * @brief A half-open numeric range `[start, end)`.
+ * @tparam T The element type.
+ */
+pub struct Range<T> {
+    pub start: T,  //!< The inclusive lower bound.
+    pub end: T,    //!< The exclusive upper bound.
+
+    /*!
+     * @brief Creates a half-open range.
+     * @param start The inclusive lower bound.
+     * @param end The exclusive upper bound.
+     * @return A new range value.
+     */
+    pub func Range(start: T, end: T) -> Range<T> {
+        return Range<T> { start: start, end: end };
+    }
+
+    /*!
+     * @brief Tests whether a value lies inside the range.
+     * @param value The value to test.
+     * @return `true` when `start <= value < end`.
+     */
+    pub func(self: &Range<T>) contains(value: T) -> bool {
+        return value >= self.start && value < self.end;
+    }
+
+    /*!
+     * @brief Returns `true` when the range contains no values.
+     * @return Whether `start >= end`.
+     */
+    pub func(self: &Range<T>) is_empty() -> bool {
+        return self.start >= self.end;
+    }
+}
+
+/*!
+ * @brief An inclusive numeric range `[start, last]`.
+ * @tparam T The element type.
+ */
+pub struct RangeInclusive<T> {
+    pub start: T,  //!< The inclusive lower bound.
+    pub last: T,   //!< The inclusive upper bound.
+
+    /*!
+     * @brief Creates an inclusive range.
+     * @param start The inclusive lower bound.
+     * @param last The inclusive upper bound.
+     * @return A new inclusive range.
+     */
+    pub func RangeInclusive(start: T, last: T) -> RangeInclusive<T> {
+        return RangeInclusive<T> { start: start, last: last };
+    }
+
+    /*!
+     * @brief Tests whether a value lies inside the range.
+     * @param value The value to test.
+     * @return `true` when `start <= value <= last`.
+     */
+    pub func(self: &RangeInclusive<T>) contains(value: T) -> bool {
+        return value >= self.start && value <= self.last;
+    }
+}
+
+/*!
+ * @brief Returns the smaller of two values.
+ * @tparam T A comparable type.
+ * @param left The first value.
+ * @param right The second value.
+ * @return The smaller argument.
+ */
+pub func min<T>(left: T, right: T) -> T {
+    return if (left < right) { left } else { right };
+}
+
+/*!
+ * @brief Returns the larger of two values.
+ * @tparam T A comparable type.
+ * @param left The first value.
+ * @param right The second value.
+ * @return The larger argument.
+ */
+pub func max<T>(left: T, right: T) -> T {
+    return if (left > right) { left } else { right };
+}
+
+/*!
+ * @brief Clamps a value to an inclusive interval.
+ * @tparam T A comparable type.
+ * @param value The value to clamp.
+ * @param lower The inclusive lower bound.
+ * @param upper The inclusive upper bound.
+ * @return `value` clamped to `[lower, upper]`.
+ */
+pub func clamp<T>(value: T, lower: T, upper: T) -> T {
+    if (value < lower) {
+        return lower;
+    }
+    if (value > upper) {
+        return upper;
+    }
+    return value;
+}
+
+/*!
+ * @brief Clamps a value to the unit interval `[0, 1]`.
+ * @param value The value to clamp.
+ * @return A value between zero and one.
+ */
+pub func clamp01(value: f64) -> f64 {
+    return clamp<f64>(value, 0.0, 1.0);
+}
+
+/*!
+ * @brief Tests whether a positive integer is a power of two.
+ * @param value The value to test.
+ * @return `true` for `1`, `2`, `4`, `8`, and so on.
+ */
+pub func is_power_of_two(value: usize) -> bool {
+    return value != 0 && (value & (value - 1)) == 0;
+}
+
+/*!
+ * @brief Rounds an integer up to the next power of two.
+ * @param value The input value.
+ * @return The smallest power of two greater than or equal to `value`, or zero
+ *         when the result would overflow.
+ */
+pub func next_power_of_two(value: usize) -> usize {
+    if (value <= 1) {
+        return 1;
+    }
+    if (value > (1 as usize) << (pointer_bits - 1)) {
+        return 0;
+    }
+    let mut result := 1;
+    while (result < value) {
+        result = result << 1;
+    }
+    return result;
+}
+
+/*!
+ * @brief Rounds an integer down to a power of two.
+ * @param value The input value.
+ * @return The largest power of two less than or equal to `value`.
+ */
+pub func previous_power_of_two(value: usize) -> usize {
+    if (value == 0) {
+        return 0;
+    }
+    let mut result := 1;
+    while (result <= value / 2) {
+        result = result << 1;
+    }
+    return result;
+}
+
+/*!
+ * @brief Returns the greatest common divisor of two unsigned integers.
+ * @param left The first value.
+ * @param right The second value.
+ * @return The greatest common divisor.
+ */
+pub func gcd(left: u64, right: u64) -> u64 {
+    let mut a := left;
+    let mut b := right;
+    while (b != 0) {
+        let remainder := a % b;
+        a = b;
+        b = remainder;
+    }
+    return a;
+}
+
+/*!
+ * @brief Returns the least common multiple of two unsigned integers.
+ * @param left The first value.
+ * @param right The second value.
+ * @return The least common multiple, or zero when either input is zero.
+ */
+pub func lcm(left: u64, right: u64) -> u64 {
+    if (left == 0 || right == 0) {
+        return 0;
+    }
+    return (left / gcd(left, right)) * right;
+}
+
+/*!
+ * @brief Divides rounding toward positive infinity.
+ * @param value The dividend.
+ * @param divisor The divisor, which must not be zero.
+ * @return The ceiling of `value / divisor`.
+ */
+pub func div_ceil(value: u64, divisor: u64) -> u64 {
+    return value / divisor + (if (value % divisor != 0) { 1 } else { 0 });
+}
+
+/*!
+ * @brief Divides rounding toward negative infinity.
+ * @param value The dividend.
+ * @param divisor The divisor, which must not be zero.
+ * @return The floor of `value / divisor`.
+ */
+pub func div_floor(value: i64, divisor: i64) -> i64 {
+    let quotient := value / divisor;
+    let remainder := value % divisor;
+    if (remainder != 0 && ((remainder < 0) != (divisor < 0))) {
+        return quotient - 1;
+    }
+    return quotient;
+}
+
+/*!
+ * @brief Computes the absolute value of a 32-bit signed integer.
+ * @param value The input value.
+ * @return The magnitude; the minimum value is returned unchanged because its
+ *         magnitude is not representable.
+ */
+pub func abs_i32(value: i32) -> i32 {
+    if (value < 0) {
+        if (value == -2147483648) {
+            return value;
+        }
+        return -value;
+    }
+    return value;
+}
+
+/*!
+ * @brief Computes the absolute value of a 64-bit signed integer.
+ * @param value The input value.
+ * @return The magnitude; the minimum value is returned unchanged.
+ */
+pub func abs_i64(value: i64) -> i64 {
+    if (value < 0) {
+        if (value == -9223372036854775807 - 1) {
+            return value;
+        }
+        return -value;
+    }
+    return value;
+}
+
+/*!
+ * @brief Computes the absolute value of a single-precision float.
+ * @param value The input value.
+ * @return The non-negative magnitude.
+ */
+pub func abs_f32(value: f32) -> f32 {
+    return if (value < 0.0) { -value } else { value };
+}
+
+/*!
+ * @brief Computes the absolute value of a double-precision float.
+ * @param value The input value.
+ * @return The non-negative magnitude.
+ */
+pub func abs_f64(value: f64) -> f64 {
+    return if (value < 0.0) { -value } else { value };
+}
+
+/*!
+ * @brief Returns the sign of a value as `-1`, `0`, or `1`.
+ * @param value The input value.
+ * @return The sign of `value`.
+ */
+pub func sign_i32(value: i32) -> i32 {
+    if (value < 0) {
+        return -1;
+    }
+    if (value > 0) {
+        return 1;
+    }
+    return 0;
+}
+
+/*!
+ * @brief Returns the sign of a float as `-1.0`, `0.0`, or `1.0`.
+ * @param value The input value.
+ * @return The sign of `value`.
+ */
+pub func sign_f64(value: f64) -> f64 {
+    if (value < 0.0) {
+        return -1.0;
+    }
+    if (value > 0.0) {
+        return 1.0;
+    }
+    return 0.0;
+}
+
+/*!
+ * @brief Adds two signed 32-bit integers with overflow checking.
+ * @param left The first operand.
+ * @param right The second operand.
+ * @return The sum, or `Option::None` on overflow.
+ */
+pub func checked_add_i32(left: i32, right: i32) -> Option<i32> {
+    let result := left + right;
+    if (right > 0 && result < left) {
+        return Option<i32>::None;
+    }
+    if (right < 0 && result > left) {
+        return Option<i32>::None;
+    }
+    return Option<i32>::Some(result);
+}
+
+/*!
+ * @brief Adds two signed 64-bit integers with overflow checking.
+ * @param left The first operand.
+ * @param right The second operand.
+ * @return The sum, or `Option::None` on overflow.
+ */
+pub func checked_add_i64(left: i64, right: i64) -> Option<i64> {
+    let result := left + right;
+    if (right > 0 && result < left) {
+        return Option<i64>::None;
+    }
+    if (right < 0 && result > left) {
+        return Option<i64>::None;
+    }
+    return Option<i64>::Some(result);
+}
+
+/*!
+ * @brief Adds two unsigned integers with overflow checking.
+ * @param left The first operand.
+ * @param right The second operand.
+ * @return The sum, or `Option::None` on overflow.
+ */
+pub func checked_add_u64(left: u64, right: u64) -> Option<u64> {
+    let result := left + right;
+    if (result < left) {
+        return Option<u64>::None;
+    }
+    return Option<u64>::Some(result);
+}
+
+/*!
+ * @brief Multiplies two unsigned integers with overflow checking.
+ * @param left The first operand.
+ * @param right The second operand.
+ * @return The product, or `Option::None` on overflow.
+ */
+pub func checked_mul_u64(left: u64, right: u64) -> Option<u64> {
+    if (left == 0 || right == 0) {
+        return Option<u64>::Some(0);
+    }
+    let result := left * right;
+    if (result / left != right) {
+        return Option<u64>::None;
+    }
+    return Option<u64>::Some(result);
+}
+
+/*!
+ * @brief Adds two signed integers, saturating at the type limits.
+ * @param left The first operand.
+ * @param right The second operand.
+ * @return The saturated sum.
+ */
+pub func saturating_add_i64(left: i64, right: i64) -> i64 {
+    let result := left + right;
+    if (right > 0 && result < left) {
+        return 9223372036854775807;
+    }
+    if (right < 0 && result > left) {
+        return -9223372036854775807 - 1;
+    }
+    return result;
+}
+
+/*!
+ * @brief Subtracts two signed integers, saturating at the type limits.
+ * @param left The first operand.
+ * @param right The second operand.
+ * @return The saturated difference.
+ */
+pub func saturating_sub_u64(left: u64, right: u64) -> u64 {
+    if (right > left) {
+        return 0;
+    }
+    return left - right;
+}
+
+/*!
+ * @brief Adds two unsigned integers, wrapping modulo `2^64`.
+ * @param left The first operand.
+ * @param right The second operand.
+ * @return The wrapped sum.
+ */
+pub func wrapping_add_u64(left: u64, right: u64) -> u64 {
+    return left + right;
+}
+
+/*!
+ * @brief Multiplies two unsigned integers, wrapping modulo `2^64`.
+ * @param left The first operand.
+ * @param right The second operand.
+ * @return The wrapped product.
+ */
+pub func wrapping_mul_u64(left: u64, right: u64) -> u64 {
+    return left * right;
+}

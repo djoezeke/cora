@@ -1,0 +1,264 @@
+/*!
+ * @file locale.cora
+ * @brief Locale-aware number, date, and text conventions.
+ *
+ * Locale objects are immutable value types.  The default constructors provide
+ * stable English and C-locale behavior; `system_locale` is the extension point
+ * used by hosted platforms to consult the process environment.
+ */
+
+import "cora::text::format";
+
+/*!
+ * @brief Categories of locale-sensitive behavior.
+ */
+pub enum LocaleCategory {
+    All,           //!< Every category.
+    Collate,       //!< String comparison order.
+    CType,         //!< Character classification.
+    Monetary,      //!< Currency formatting.
+    Numeric,       //!< Number separators and grouping.
+    Time,          //!< Date and time formatting.
+    Messages,      //!< Translated messages.
+}
+
+/*!
+ * @brief Ordering of date components in a formatted date.
+ */
+pub enum DateOrder {
+    YearMonthDay,  //!< `YYYY-MM-DD`.
+    DayMonthYear,  //!< `DD/MM/YYYY`.
+    MonthDayYear,  //!< `MM/DD/YYYY`.
+}
+
+/*!
+ * @brief A locale definition used by formatting and parsing routines.
+ */
+pub struct Locale {
+    pub language: *const u8,          //!< Null-terminated language code.
+    pub territory: *const u8,         //!< Null-terminated territory code.
+    pub decimal_point: u8,            //!< Decimal separator.
+    pub thousands_sep: u8,            //!< Digit-group separator.
+    pub grouping: u8,                 //!< Digits per group, or zero to disable.
+    pub date_order: DateOrder,        //!< Date component ordering.
+    pub currency_symbol: *const u8,   //!< Null-terminated currency symbol.
+    pub currency_decimals: u8,        //!< Fractional digits for currency.
+
+    /*!
+     * @brief Creates a locale description.
+     * @param language Null-terminated language code.
+     * @param territory Null-terminated territory code.
+     * @param decimal_point Decimal separator byte.
+     * @param thousands_sep Group separator byte.
+     * @param grouping Digits per group.
+     * @param date_order Date component ordering.
+     * @param currency_symbol Null-terminated currency symbol.
+     * @param currency_decimals Fractional digits for currency.
+     * @return A locale value.
+     */
+    pub func Locale(language: *const u8, territory: *const u8,
+                    decimal_point: u8, thousands_sep: u8, grouping: u8,
+                    date_order: DateOrder, currency_symbol: *const u8,
+                    currency_decimals: u8) -> Locale {
+        return Locale {
+            language: language,
+            territory: territory,
+            decimal_point: decimal_point,
+            thousands_sep: thousands_sep,
+            grouping: grouping,
+            date_order: date_order,
+            currency_symbol: currency_symbol,
+            currency_decimals: currency_decimals,
+        };
+    }
+
+    /*!
+     * @brief Returns the English (United States) locale.
+     * @return A stable English locale.
+     */
+    pub func english() -> Locale {
+        return Locale {
+            language: "en",
+            territory: "US",
+            decimal_point: '.',
+            thousands_sep: ',',
+            grouping: 3,
+            date_order: DateOrder::MonthDayYear,
+            currency_symbol: "$",
+            currency_decimals: 2,
+        };
+    }
+
+    /*!
+     * @brief Returns the portable C locale.
+     * @return A locale with `.` decimals and no grouping.
+     */
+    pub func c_locale() -> Locale {
+        return Locale {
+            language: "C",
+            territory: "",
+            decimal_point: '.',
+            thousands_sep: ',',
+            grouping: 0,
+            date_order: DateOrder::YearMonthDay,
+            currency_symbol: "",
+            currency_decimals: 2,
+        };
+    }
+
+    /*!
+     * @brief Returns the locale configured for the current process.
+     *
+     * The core implementation falls back to the C locale.  Hosted platform
+     * layers may override this function.
+     *
+     * @return The active locale.
+     */
+    pub func system_locale() -> Locale {
+        return Locale::c_locale();
+    }
+
+    /*!
+     * @brief Tests whether two locales share a language and territory.
+     * @param other The locale to compare against.
+     * @return `true` when both locale codes match.
+     */
+    pub func(self: &Locale) equals(other: Locale) -> bool {
+        return cstr_equals(self.language, other.language) &&
+               cstr_equals(self.territory, other.territory);
+    }
+}
+
+/*!
+ * @brief Formats an integer using a locale's digit grouping.
+ * @param locale The locale to use.
+ * @param value The integer to format.
+ * @param buffer The output buffer.
+ * @param capacity The output capacity.
+ * @return The number of bytes written.
+ */
+pub func format_integer(locale: Locale, value: i64, buffer: *mut u8,
+                        capacity: usize) -> usize {
+    let mut formatter := Formatter(buffer, capacity);
+    if (locale.grouping == 0) {
+        return formatter.write_i64(value);
+    }
+
+    let negative := value < 0;
+    let magnitude := if (negative) { 0u64 - (value as u64) } else {
+        value as u64
+    };
+    let mut digits: u8[32] = [0; 32];
+    let mut count := 0;
+    let mut remaining := magnitude;
+    if (remaining == 0) {
+        digits[0] = '0';
+        count = 1;
+    }
+    while (remaining > 0 && count < 32) {
+        digits[count] = '0' + (remaining % 10) as u8;
+        count += 1;
+        remaining = remaining / 10;
+    }
+
+    let mut written := 0;
+    if (negative) {
+        if (formatter.write_byte('-')) {
+            written += 1;
+        }
+    }
+    while (count > 0) {
+        count -= 1;
+        if (formatter.write_byte(digits[count])) {
+            written += 1;
+        }
+        if (count > 0 && count % locale.grouping == 0) {
+            if (formatter.write_byte(locale.thousands_sep)) {
+                written += 1;
+            }
+        }
+    }
+    return written;
+}
+
+/*!
+ * @brief Formats a floating-point number using a locale's decimal separator.
+ * @param locale The locale to use.
+ * @param value The value to format.
+ * @param precision The number of fractional digits.
+ * @param buffer The output buffer.
+ * @param capacity The output capacity.
+ * @return The number of bytes written.
+ */
+pub func format_float(locale: Locale, value: f64, precision: usize,
+                      buffer: *mut u8, capacity: usize) -> usize {
+    let mut formatter := Formatter(buffer, capacity);
+    let negative := value < 0.0;
+    let magnitude := if (negative) { -value } else { value };
+    let whole := magnitude as u64;
+    let mut written := 0;
+    if (negative) {
+        if (formatter.write_byte('-')) {
+            written += 1;
+        }
+    }
+    written += format_integer(locale, whole as i64,
+                              buffer + written, capacity - written);
+    if (precision > 0) {
+        let mut fraction_formatter := Formatter(buffer + written,
+                                                capacity - written);
+        if (fraction_formatter.write_byte(locale.decimal_point)) {
+            written += 1;
+        }
+        let mut fraction := magnitude - (whole as f64);
+        let mut index := 0;
+        while (index < precision) {
+            fraction *= 10.0;
+            let digit := fraction as u8;
+            if (fraction_formatter.write_byte('0' + digit)) {
+                written += 1;
+            }
+            fraction -= digit as f64;
+            index += 1;
+        }
+    }
+    return written;
+}
+
+/*!
+ * @brief Returns `true` when a byte is a locale-independent decimal digit.
+ * @param value The byte to test.
+ * @return `true` for `'0'` through `'9'`.
+ */
+pub func is_digit(value: u8) -> bool {
+    return value >= '0' && value <= '9';
+}
+
+/*!
+ * @brief Returns `true` when a byte is ASCII whitespace.
+ * @param value The byte to test.
+ * @return `true` for space, tab, carriage return, or line feed.
+ */
+pub func is_space(value: u8) -> bool {
+    return value == ' ' || value == '\t' || value == '\r' || value == '\n';
+}
+
+/*!
+ * @brief Compares two null-terminated strings for equality.
+ * @param left The first string.
+ * @param right The second string.
+ * @return `true` when both strings contain the same bytes.
+ */
+func cstr_equals(left: *const u8, right: *const u8) -> bool {
+    if (left == null || right == null) {
+        return left == right;
+    }
+    let mut index := 0;
+    while (left[index] != 0 && right[index] != 0) {
+        if (left[index] != right[index]) {
+            return false;
+        }
+        index += 1;
+    }
+    return left[index] == right[index];
+}

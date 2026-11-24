@@ -1,18 +1,50 @@
+/*!
+ * @file const.cora
+ * @brief Mathematical constants for floating-point calculations.
+ *
+ * All constants are compile-time values.  The `f32` variants are provided for
+ * code that deliberately keeps a single-precision pipeline; the unsuffixed
+ * names are double precision.
+ */
 
-macro func num_const(Type, Suffix) {
-    
-}
+//! Euler's number (e).
+pub comptime const e: f64 = 2.718281828459045235360287471352662497757;
 
-using e_v<T: float> = 
+//! Archimedes' constant (pi).
+pub comptime const pi: f64 = 3.141592653589793238462643383279502884197;
 
-//! Euler's number (e)
-pub comptime const e := 2.718281828459045235360287471353;
+//! The golden ratio (phi) = (1 + sqrt(5)) / 2.
+pub comptime const phi: f64 = 1.618033988749894848204586834365638117720;
 
-//! Archimedes' constant (π)
-pub comptime const pi := 3.141592653589793238462643383279;
+//! The circle constant (tau) = 2 * pi.
+pub comptime const tau: f64 = 2.0 * pi;
 
-//! Phi or Golden ratio constant (Φ) = (1 + sqrt(5))/2
-pub comptime const phi := 1.618033988749894848204586834365;
+//! The square root of two.
+pub comptime const sqrt2: f64 = 1.414213562373095048801688724209698078570;
 
-//! Circle constant (τ)
-pub comptime const tau := 2 * pi;
+//! The natural logarithm of two.
+pub comptime const ln2: f64 = 0.693147180559945309417232121458176568075;
+
+//! The natural logarithm of ten.
+pub comptime const ln10: f64 = 2.302585092994045684017991454684364207601;
+
+//! The base-two logarithm of Euler's number.
+pub comptime const log2e: f64 = 1.442695040888963407359924681001892137426;
+
+//! The base-ten logarithm of Euler's number.
+pub comptime const log10e: f64 = 0.434294481903251827651128918916605082294;
+
+//! The ratio of a circle's circumference to its diameter.
+pub comptime const pi_f32: f32 = 3.14159265358979323846;
+
+//! Euler's number in single precision.
+pub comptime const e_f32: f32 = 2.71828182845904523536;
+
+//! The golden ratio in single precision.
+pub comptime const phi_f32: f32 = 1.61803398874989484820;
+
+//! The circle constant in single precision.
+pub comptime const tau_f32: f32 = 2.0 * pi_f32;
+
+//! The square root of two in single precision.
+pub comptime const sqrt2_f32: f32 = 1.41421356237309504880;

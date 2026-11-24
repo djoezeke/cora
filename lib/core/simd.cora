@@ -1,1 +1,288 @@
+/*!
+ * @file simd.cora
+ * @brief Portable fixed-width vector types.
+ *
+ * `Simd<T, N>` is a lane-addressable vector with explicit arithmetic and
+ * reduction operations.  Targets with native vector registers lower the
+ * operations directly; other targets receive a small scalar loop.  The type is
+ * intentionally independent of the machine vector width so algorithms can be
+ * written once and tuned per target.
+ */
 
+/*!
+ * @brief A fixed-width vector of `N` values of type `T`.
+ * @tparam T The lane type.
+ * @tparam N The number of lanes.
+ */
+pub struct Simd<T, const N: usize> {
+    lanes: T[N],
+
+    /*!
+     * @brief Creates a vector from an array of lane values.
+     * @param lanes The lane values.
+     * @return A vector containing the supplied lanes.
+     */
+    pub func Simd(lanes: T[N]) -> Simd<T, N> {
+        return Simd<T, N> { lanes: lanes };
+    }
+
+    /*!
+     * @brief Creates a vector with every lane set to `value`.
+     * @param value The value for each lane.
+     * @return A splatted vector.
+     */
+    pub func splat(value: T) -> Simd<T, N> {
+        return Simd<T, N> { lanes: [value; N] };
+    }
+
+    /*!
+     * @brief Loads lanes from a contiguous array.
+     * @param source The source array.
+     * @return A vector containing a copy of the source lanes.
+     */
+    pub func load(source: *const T) -> Simd<T, N> {
+        let mut result := Simd<T, N>::splat(source[0]);
+        let mut index := 0;
+        while (index < N) {
+            result.lanes[index] = source[index];
+            index += 1;
+        }
+        return result;
+    }
+
+    /*!
+     * @brief Stores lanes to a contiguous array.
+     * @param destination The destination array.
+     */
+    pub func(self: &Simd<T, N>) store(destination: *mut T) -> void {
+        let mut index := 0;
+        while (index < N) {
+            destination[index] = self.lanes[index];
+            index += 1;
+        }
+    }
+
+    /*!
+     * @brief Returns the number of lanes.
+     * @return The compile-time lane count `N`.
+     */
+    pub comptime func lane_count() -> usize {
+        return N;
+    }
+
+    /*!
+     * @brief Reads one lane.
+     * @param index The lane index.
+     * @return The lane value, or a copy of lane zero when out of range.
+     */
+    pub func(self: &Simd<T, N>) lane(index: usize) -> T {
+        if (index >= N) {
+            return self.lanes[0];
+        }
+        return self.lanes[index];
+    }
+
+    /*!
+     * @brief Replaces one lane.
+     * @param index The lane index.
+     * @param value The new lane value.
+     * @return `true` when the index was valid.
+     */
+    pub func(self: &mut Simd<T, N>) set_lane(index: usize,
+                                             value: T) -> bool {
+        if (index >= N) {
+            return false;
+        }
+        self.lanes[index] = value;
+        return true;
+    }
+
+    /*!
+     * @brief Applies a function to every lane.
+     * @param operation The lane transformation.
+     * @return A vector containing the transformed lanes.
+     */
+    pub func(self: &Simd<T, N>) map(operation: func(T) -> T) -> Simd<T, N> {
+        let mut result := *self;
+        let mut index := 0;
+        while (index < N) {
+            result.lanes[index] = operation(self.lanes[index]);
+            index += 1;
+        }
+        return result;
+    }
+
+    /*!
+     * @brief Combines two vectors lane by lane.
+     * @param other The second vector.
+     * @param operation The lane combinator.
+     * @return The combined vector.
+     */
+    pub func(self: &Simd<T, N>) zip_with(other: Simd<T, N>,
+                                          operation: func(T, T) -> T) -> Simd<T, N> {
+        let mut result := *self;
+        let mut index := 0;
+        while (index < N) {
+            result.lanes[index] = operation(self.lanes[index],
+                                            other.lanes[index]);
+            index += 1;
+        }
+        return result;
+    }
+
+    /*!
+     * @brief Adds two vectors lane by lane.
+     * @param other The second vector.
+     * @return The lane-wise sum.
+     */
+    pub func(self: &Simd<T, N>) add(other: Simd<T, N>) -> Simd<T, N> {
+        return self.zip_with(other, func(left: T, right: T) -> T {
+            return left + right;
+        });
+    }
+
+    /*!
+     * @brief Subtracts two vectors lane by lane.
+     * @param other The second vector.
+     * @return The lane-wise difference.
+     */
+    pub func(self: &Simd<T, N>) sub(other: Simd<T, N>) -> Simd<T, N> {
+        return self.zip_with(other, func(left: T, right: T) -> T {
+            return left - right;
+        });
+    }
+
+    /*!
+     * @brief Multiplies two vectors lane by lane.
+     * @param other The second vector.
+     * @return The lane-wise product.
+     */
+    pub func(self: &Simd<T, N>) mul(other: Simd<T, N>) -> Simd<T, N> {
+        return self.zip_with(other, func(left: T, right: T) -> T {
+            return left * right;
+        });
+    }
+
+    /*!
+     * @brief Divides two vectors lane by lane.
+     * @param other The second vector.
+     * @return The lane-wise quotient.
+     */
+    pub func(self: &Simd<T, N>) div(other: Simd<T, N>) -> Simd<T, N> {
+        return self.zip_with(other, func(left: T, right: T) -> T {
+            return left / right;
+        });
+    }
+
+    /*!
+     * @brief Returns the lane-wise minimum of two vectors.
+     * @param other The second vector.
+     * @return The minimum of each lane pair.
+     */
+    pub func(self: &Simd<T, N>) min(other: Simd<T, N>) -> Simd<T, N> {
+        return self.zip_with(other, func(left: T, right: T) -> T {
+            return if (left < right) { left } else { right };
+        });
+    }
+
+    /*!
+     * @brief Returns the lane-wise maximum of two vectors.
+     * @param other The second vector.
+     * @return The maximum of each lane pair.
+     */
+    pub func(self: &Simd<T, N>) max(other: Simd<T, N>) -> Simd<T, N> {
+        return self.zip_with(other, func(left: T, right: T) -> T {
+            return if (left > right) { left } else { right };
+        });
+    }
+
+    /*!
+     * @brief Adds all lanes together.
+     * @return The scalar sum of the lanes.
+     */
+    pub func(self: &Simd<T, N>) reduce_add() -> T {
+        let mut result := self.lanes[0];
+        let mut index := 1;
+        while (index < N) {
+            result = result + self.lanes[index];
+            index += 1;
+        }
+        return result;
+    }
+
+    /*!
+     * @brief Multiplies all lanes together.
+     * @return The scalar product of the lanes.
+     */
+    pub func(self: &Simd<T, N>) reduce_mul() -> T {
+        let mut result := self.lanes[0];
+        let mut index := 1;
+        while (index < N) {
+            result = result * self.lanes[index];
+            index += 1;
+        }
+        return result;
+    }
+
+    /*!
+     * @brief Returns the smallest lane value.
+     * @return The lane-wise minimum.
+     */
+    pub func(self: &Simd<T, N>) reduce_min() -> T {
+        let mut result := self.lanes[0];
+        let mut index := 1;
+        while (index < N) {
+            if (self.lanes[index] < result) {
+                result = self.lanes[index];
+            }
+            index += 1;
+        }
+        return result;
+    }
+
+    /*!
+     * @brief Returns the largest lane value.
+     * @return The lane-wise maximum.
+     */
+    pub func(self: &Simd<T, N>) reduce_max() -> T {
+        let mut result := self.lanes[0];
+        let mut index := 1;
+        while (index < N) {
+            if (self.lanes[index] > result) {
+                result = self.lanes[index];
+            }
+            index += 1;
+        }
+        return result;
+    }
+
+    /*!
+     * @brief Computes the dot product with another vector.
+     * @param other The second vector.
+     * @return The sum of the lane products.
+     */
+    pub func(self: &Simd<T, N>) dot(other: Simd<T, N>) -> T {
+        return self.mul(other).reduce_add();
+    }
+}
+
+//! Two single-precision floats.
+pub using f32x2 = Simd<f32, 2>;
+//! Four single-precision floats.
+pub using f32x4 = Simd<f32, 4>;
+//! Eight single-precision floats.
+pub using f32x8 = Simd<f32, 8>;
+//! Two double-precision floats.
+pub using f64x2 = Simd<f64, 2>;
+//! Four double-precision floats.
+pub using f64x4 = Simd<f64, 4>;
+//! Four signed 32-bit integers.
+pub using i32x4 = Simd<i32, 4>;
+//! Eight signed 32-bit integers.
+pub using i32x8 = Simd<i32, 8>;
+//! Four unsigned 32-bit integers.
+pub using u32x4 = Simd<u32, 4>;
+//! Sixteen bytes.
+pub using u8x16 = Simd<u8, 16>;
+//! Thirty-two bytes.
+pub using u8x32 = Simd<u8, 32>;

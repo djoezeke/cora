@@ -1,1 +1,357 @@
+/*!
+ * @file time.cora
+ * @brief Portable duration, monotonic clock, and wall-clock interfaces.
+ *
+ * The core library exposes a small time abstraction so containers and
+ * synchronization primitives can measure elapsed time without depending on a
+ * hosted operating system.  The actual clock reads are supplied by the target
+ * runtime through the `cora_time_*` entry points.
+ */
 
+import "core::type";
+
+/*!
+ * @brief A signed span of time represented as seconds and nanoseconds.
+ */
+pub struct Duration {
+    pub seconds: u64,      //!< Whole seconds.
+    pub nanoseconds: u32,  //!< Sub-second nanoseconds, less than one billion.
+
+    /*!
+     * @brief Creates a duration from its components.
+     * @param seconds Whole seconds.
+     * @param nanoseconds Sub-second nanoseconds.
+     * @return A normalized duration.
+     */
+    pub func Duration(seconds: u64, nanoseconds: u32) -> Duration {
+        return Duration {
+            seconds: seconds + (nanoseconds / 1000000000) as u64,
+            nanoseconds: nanoseconds % 1000000000,
+        };
+    }
+
+    /*!
+     * @brief Creates a zero-length duration.
+     * @return A duration of zero.
+     */
+    pub func zero() -> Duration {
+        return Duration { seconds: 0, nanoseconds: 0 };
+    }
+
+    /*!
+     * @brief Creates a duration from whole seconds.
+     * @param seconds The number of seconds.
+     * @return The corresponding duration.
+     */
+    pub func from_secs(seconds: u64) -> Duration {
+        return Duration { seconds: seconds, nanoseconds: 0 };
+    }
+
+    /*!
+     * @brief Creates a duration from milliseconds.
+     * @param milliseconds The number of milliseconds.
+     * @return The corresponding duration.
+     */
+    pub func from_millis(milliseconds: u64) -> Duration {
+        return Duration {
+            seconds: milliseconds / 1000,
+            nanoseconds: ((milliseconds % 1000) * 1000000) as u32,
+        };
+    }
+
+    /*!
+     * @brief Creates a duration from microseconds.
+     * @param microseconds The number of microseconds.
+     * @return The corresponding duration.
+     */
+    pub func from_micros(microseconds: u64) -> Duration {
+        return Duration {
+            seconds: microseconds / 1000000,
+            nanoseconds: ((microseconds % 1000000) * 1000) as u32,
+        };
+    }
+
+    /*!
+     * @brief Creates a duration from nanoseconds.
+     * @param nanoseconds The number of nanoseconds.
+     * @return The corresponding duration.
+     */
+    pub func from_nanos(nanoseconds: u64) -> Duration {
+        return Duration {
+            seconds: nanoseconds / 1000000000,
+            nanoseconds: (nanoseconds % 1000000000) as u32,
+        };
+    }
+
+    /*!
+     * @brief Returns the number of whole seconds.
+     * @return The seconds component.
+     */
+    pub func(self: &Duration) as_secs() -> u64 {
+        return self.seconds;
+    }
+
+    /*!
+     * @brief Returns the sub-second component.
+     * @return The nanosecond component.
+     */
+    pub func(self: &Duration) subsec_nanos() -> u32 {
+        return self.nanoseconds;
+    }
+
+    /*!
+     * @brief Returns the duration in milliseconds, truncating.
+     * @return The total number of milliseconds.
+     */
+    pub func(self: &Duration) as_millis() -> u64 {
+        return self.seconds * 1000 + (self.nanoseconds / 1000000) as u64;
+    }
+
+    /*!
+     * @brief Returns the duration in microseconds, truncating.
+     * @return The total number of microseconds.
+     */
+    pub func(self: &Duration) as_micros() -> u64 {
+        return self.seconds * 1000000 + (self.nanoseconds / 1000) as u64;
+    }
+
+    /*!
+     * @brief Returns the duration in nanoseconds.
+     * @return The total number of nanoseconds, saturating on overflow.
+     */
+    pub func(self: &Duration) as_nanos() -> u64 {
+        if (self.seconds > 18446744073) {
+            return 18446744073709551615;
+        }
+        return self.seconds * 1000000000 + self.nanoseconds as u64;
+    }
+
+    /*!
+     * @brief Returns `true` for a zero-length duration.
+     * @return Whether the duration is zero.
+     */
+    pub func(self: &Duration) is_zero() -> bool {
+        return self.seconds == 0 && self.nanoseconds == 0;
+    }
+
+    /*!
+     * @brief Adds two durations.
+     * @param other The duration to add.
+     * @return The sum.
+     */
+    pub func(self: &Duration) add(other: Duration) -> Duration {
+        let seconds := self.seconds + other.seconds;
+        let nanos := self.nanoseconds + other.nanoseconds;
+        return Duration(seconds, nanos);
+    }
+
+    /*!
+     * @brief Subtracts a duration.
+     * @param other The duration to subtract.
+     * @return The difference, or zero when `other` is larger.
+     */
+    pub func(self: &Duration) sub(other: Duration) -> Duration {
+        if (other.seconds > self.seconds ||
+            (other.seconds == self.seconds &&
+             other.nanoseconds > self.nanoseconds)) {
+            return Duration::zero();
+        }
+        if (self.nanoseconds >= other.nanoseconds) {
+            return Duration {
+                seconds: self.seconds - other.seconds,
+                nanoseconds: self.nanoseconds - other.nanoseconds,
+            };
+        }
+        return Duration {
+            seconds: self.seconds - other.seconds - 1,
+            nanoseconds: 1000000000 + self.nanoseconds - other.nanoseconds,
+        };
+    }
+
+    /*!
+     * @brief Multiplies a duration by an integer.
+     * @param factor The multiplier.
+     * @return The scaled duration.
+     */
+    pub func(self: &Duration) mul(factor: u32) -> Duration {
+        return Duration(self.seconds * factor as u64,
+                        self.nanoseconds * factor);
+    }
+
+    /*!
+     * @brief Divides a duration by an integer.
+     * @param divisor A non-zero divisor.
+     * @return The scaled duration.
+     */
+    pub func(self: &Duration) div(divisor: u32) -> Duration {
+        if (divisor == 0) {
+            return Duration::zero();
+        }
+        let total := self.as_nanos();
+        return Duration::from_nanos(total / divisor as u64);
+    }
+
+    /*!
+     * @brief Compares two durations.
+     * @param other The duration to compare against.
+     * @return Their ordering.
+     */
+    pub func(self: &Duration) compare(other: Duration) -> Ordering {
+        if (self.seconds < other.seconds ||
+            (self.seconds == other.seconds &&
+             self.nanoseconds < other.nanoseconds)) {
+            return Ordering::Less;
+        }
+        if (self.seconds == other.seconds &&
+            self.nanoseconds == other.nanoseconds) {
+            return Ordering::Equal;
+        }
+        return Ordering::Greater;
+    }
+}
+
+/*!
+ * @brief A point on a monotonic clock.
+ *
+ * The absolute value is meaningful only for comparing instants produced by the
+ * same clock.  It is not a calendar date.
+ */
+pub struct Instant {
+    ticks: u64,
+
+    /*!
+     * @brief Creates an instant from a monotonic tick value.
+     * @param ticks The raw monotonic tick value.
+     * @return An instant.
+     */
+    pub func Instant(ticks: u64) -> Instant {
+        return Instant { ticks: ticks };
+    }
+
+    /*!
+     * @brief Returns the current monotonic instant.
+     * @return The current instant.
+     */
+    pub func now() -> Instant {
+        return Instant { ticks: cora_time_monotonic_nanos() };
+    }
+
+    /*!
+     * @brief Returns the raw tick value.
+     * @return The monotonic nanosecond count.
+     */
+    pub func(self: &Instant) as_nanos() -> u64 {
+        return self.ticks;
+    }
+
+    /*!
+     * @brief Computes the time elapsed since this instant.
+     * @return The elapsed duration.
+     */
+    pub func(self: &Instant) elapsed() -> Duration {
+        let current := Instant::now();
+        return current.duration_since(*self);
+    }
+
+    /*!
+     * @brief Computes the duration from this instant to a later one.
+     * @param earlier The earlier instant.
+     * @return The duration between the instants, or zero if `earlier` is later.
+     */
+    pub func(self: &Instant) duration_since(earlier: Instant) -> Duration {
+        if (earlier.ticks >= self.ticks) {
+            return Duration::zero();
+        }
+        return Duration::from_nanos(self.ticks - earlier.ticks);
+    }
+
+    /*!
+     * @brief Adds a duration to an instant.
+     * @param duration The duration to add.
+     * @return The later instant.
+     */
+    pub func(self: &Instant) add(duration: Duration) -> Instant {
+        return Instant { ticks: self.ticks + duration.as_nanos() };
+    }
+
+    /*!
+     * @brief Subtracts a duration from an instant.
+     * @param duration The duration to subtract.
+     * @return The earlier instant, saturating at zero.
+     */
+    pub func(self: &Instant) sub(duration: Duration) -> Instant {
+        let nanos := duration.as_nanos();
+        if (nanos >= self.ticks) {
+            return Instant { ticks: 0 };
+        }
+        return Instant { ticks: self.ticks - nanos };
+    }
+}
+
+/*!
+ * @brief A point on the civil (wall-clock) time line.
+ */
+pub struct SystemTime {
+    unix_nanos: i64,
+
+    /*!
+     * @brief Creates a system time from Unix nanoseconds.
+     * @param unix_nanos Nanoseconds since the Unix epoch.
+     * @return A system time value.
+     */
+    pub func SystemTime(unix_nanos: i64) -> SystemTime {
+        return SystemTime { unix_nanos: unix_nanos };
+    }
+
+    /*!
+     * @brief Returns the current wall-clock time.
+     * @return The current system time.
+     */
+    pub func now() -> SystemTime {
+        return SystemTime { unix_nanos: cora_time_unix_nanos() };
+    }
+
+    /*!
+     * @brief Returns nanoseconds since the Unix epoch.
+     * @return The stored Unix nanosecond value.
+     */
+    pub func(self: &SystemTime) as_unix_nanos() -> i64 {
+        return self.unix_nanos;
+    }
+
+    /*!
+     * @brief Returns the time since the Unix epoch.
+     * @return A duration, or zero for times before the epoch.
+     */
+    pub func(self: &SystemTime) since_epoch() -> Duration {
+        if (self.unix_nanos <= 0) {
+            return Duration::zero();
+        }
+        return Duration::from_nanos(self.unix_nanos as u64);
+    }
+}
+
+/*!
+ * @brief Suspends the current thread for at least a duration.
+ * @param duration The minimum time to sleep.
+ */
+pub func sleep(duration: Duration) -> void {
+    cora_time_sleep_nanos(duration.as_nanos());
+}
+
+/*!
+ * @brief Suspends the current thread for a number of milliseconds.
+ * @param milliseconds The minimum number of milliseconds to sleep.
+ */
+pub func sleep_ms(milliseconds: u64) -> void {
+    sleep(Duration::from_millis(milliseconds));
+}
+
+[[link_name("cora_time_monotonic_nanos")]]
+extern "C" func cora_time_monotonic_nanos() -> u64;
+
+[[link_name("cora_time_unix_nanos")]]
+extern "C" func cora_time_unix_nanos() -> i64;
+
+[[link_name("cora_time_sleep_nanos")]]
+extern "C" func cora_time_sleep_nanos(nanoseconds: u64) -> void;

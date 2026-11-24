@@ -1,0 +1,460 @@
+/*!
+ * @file bits.cora
+ * @brief Bit manipulation, rotation, and fixed-capacity bitsets.
+ *
+ * Bit operations are specified on unsigned 64-bit values.  Narrower values can
+ * be widened before the call and truncated afterwards; this keeps the API small
+ * and makes the algorithm independent of the target word size.
+ */
+
+/*!
+ * @brief Counts the set bits in a value.
+ * @param value The value to inspect.
+ * @return The population count.
+ */
+pub func popcount(value: u64) -> u32 {
+    let mut remaining := value;
+    let mut count := 0;
+    while (remaining != 0) {
+        remaining = remaining & (remaining - 1);
+        count += 1;
+    }
+    return count;
+}
+
+/*!
+ * @brief Counts the clear bits in a value.
+ * @param value The value to inspect.
+ * @return The number of zero bits.
+ */
+pub func count_zeros(value: u64) -> u32 {
+    return 64 - popcount(value);
+}
+
+/*!
+ * @brief Counts leading zero bits.
+ * @param value The value to inspect.
+ * @return The number of zeroes before the most significant set bit.
+ */
+pub func leading_zeros(value: u64) -> u32 {
+    if (value == 0) {
+        return 64;
+    }
+    let mut count := 0;
+    let mut mask := 0x8000000000000000;
+    while ((value & mask) == 0) {
+        count += 1;
+        mask = mask >> 1;
+    }
+    return count;
+}
+
+/*!
+ * @brief Counts trailing zero bits.
+ * @param value The value to inspect.
+ * @return The number of zeroes after the least significant set bit.
+ */
+pub func trailing_zeros(value: u64) -> u32 {
+    if (value == 0) {
+        return 64;
+    }
+    let mut count := 0;
+    let mut remaining := value;
+    while ((remaining & 1) == 0) {
+        count += 1;
+        remaining = remaining >> 1;
+    }
+    return count;
+}
+
+/*!
+ * @brief Returns the position of the most significant set bit.
+ * @param value The value to inspect.
+ * @return The one-based bit width, or zero for zero.
+ */
+pub func bit_width(value: u64) -> u32 {
+    return 64 - leading_zeros(value);
+}
+
+/*!
+ * @brief Rotates a 64-bit value left.
+ * @param value The value to rotate.
+ * @param amount The rotation amount in bits.
+ * @return The rotated value.
+ */
+pub func rotate_left_u64(value: u64, amount: u32) -> u64 {
+    let shift := amount % 64;
+    if (shift == 0) {
+        return value;
+    }
+    return (value << shift) | (value >> (64 - shift));
+}
+
+/*!
+ * @brief Rotates a 64-bit value right.
+ * @param value The value to rotate.
+ * @param amount The rotation amount in bits.
+ * @return The rotated value.
+ */
+pub func rotate_right_u64(value: u64, amount: u32) -> u64 {
+    let shift := amount % 64;
+    if (shift == 0) {
+        return value;
+    }
+    return (value >> shift) | (value << (64 - shift));
+}
+
+/*!
+ * @brief Rotates a 32-bit value left.
+ * @param value The value to rotate.
+ * @param amount The rotation amount in bits.
+ * @return The rotated value.
+ */
+pub func rotate_left_u32(value: u32, amount: u32) -> u32 {
+    let shift := amount % 32;
+    if (shift == 0) {
+        return value;
+    }
+    return (value << shift) | (value >> (32 - shift));
+}
+
+/*!
+ * @brief Rotates a 32-bit value right.
+ * @param value The value to rotate.
+ * @param amount The rotation amount in bits.
+ * @return The rotated value.
+ */
+pub func rotate_right_u32(value: u32, amount: u32) -> u32 {
+    let shift := amount % 32;
+    if (shift == 0) {
+        return value;
+    }
+    return (value >> shift) | (value << (32 - shift));
+}
+
+/*!
+ * @brief Reverses the order of all bits in a 64-bit value.
+ * @param value The value to reverse.
+ * @return The bit-reversed value.
+ */
+pub func reverse_bits_u64(value: u64) -> u64 {
+    let mut result := value;
+    result = ((result & 0x5555555555555555) << 1) |
+             ((result >> 1) & 0x5555555555555555);
+    result = ((result & 0x3333333333333333) << 2) |
+             ((result >> 2) & 0x3333333333333333);
+    result = ((result & 0x0F0F0F0F0F0F0F0F) << 4) |
+             ((result >> 4) & 0x0F0F0F0F0F0F0F0F);
+    result = ((result & 0x00FF00FF00FF00FF) << 8) |
+             ((result >> 8) & 0x00FF00FF00FF00FF);
+    result = ((result & 0x0000FFFF0000FFFF) << 16) |
+             ((result >> 16) & 0x0000FFFF0000FFFF);
+    return (result << 32) | (result >> 32);
+}
+
+/*!
+ * @brief Reverses the order of all bits in a 32-bit value.
+ * @param value The value to reverse.
+ * @return The bit-reversed value.
+ */
+pub func reverse_bits_u32(value: u32) -> u32 {
+    let mut result := value;
+    result = ((result & 0x55555555) << 1) | ((result >> 1) & 0x55555555);
+    result = ((result & 0x33333333) << 2) | ((result >> 2) & 0x33333333);
+    result = ((result & 0x0F0F0F0F) << 4) | ((result >> 4) & 0x0F0F0F0F);
+    result = ((result & 0x00FF00FF) << 8) | ((result >> 8) & 0x00FF00FF);
+    return (result << 16) | (result >> 16);
+}
+
+/*!
+ * @brief Swaps the bytes of a 16-bit value.
+ * @param value The value to swap.
+ * @return The byte-swapped value.
+ */
+pub func byte_swap_u16(value: u16) -> u16 {
+    return (value >> 8) | (value << 8);
+}
+
+/*!
+ * @brief Swaps the bytes of a 32-bit value.
+ * @param value The value to swap.
+ * @return The byte-swapped value.
+ */
+pub func byte_swap_u32(value: u32) -> u32 {
+    return ((value & 0x000000FF) << 24) |
+           ((value & 0x0000FF00) << 8) |
+           ((value & 0x00FF0000) >> 8) |
+           ((value & 0xFF000000) >> 24);
+}
+
+/*!
+ * @brief Swaps the bytes of a 64-bit value.
+ * @param value The value to swap.
+ * @return The byte-swapped value.
+ */
+pub func byte_swap_u64(value: u64) -> u64 {
+    return ((value & 0x00000000000000FF) << 56) |
+           ((value & 0x000000000000FF00) << 40) |
+           ((value & 0x0000000000FF0000) << 24) |
+           ((value & 0x00000000FF000000) << 8) |
+           ((value & 0x000000FF00000000) >> 8) |
+           ((value & 0x0000FF0000000000) >> 24) |
+           ((value & 0x00FF000000000000) >> 40) |
+           ((value & 0xFF00000000000000) >> 56);
+}
+
+/*!
+ * @brief Creates a mask with the lowest `count` bits set.
+ * @param count The number of bits, at most 64.
+ * @return The mask value.
+ */
+pub func mask(count: u32) -> u64 {
+    if (count >= 64) {
+        return 0xFFFFFFFFFFFFFFFF;
+    }
+    if (count == 0) {
+        return 0;
+    }
+    return ((1 as u64) << count) - 1;
+}
+
+/*!
+ * @brief Tests one bit.
+ * @param value The source value.
+ * @param index The bit index, from zero.
+ * @return `true` when the bit is set.
+ */
+pub func get_bit(value: u64, index: u32) -> bool {
+    if (index >= 64) {
+        return false;
+    }
+    return ((value >> index) & 1) != 0;
+}
+
+/*!
+ * @brief Sets one bit.
+ * @param value The source value.
+ * @param index The bit index.
+ * @return The value with the bit set.
+ */
+pub func set_bit(value: u64, index: u32) -> u64 {
+    if (index >= 64) {
+        return value;
+    }
+    return value | ((1 as u64) << index);
+}
+
+/*!
+ * @brief Clears one bit.
+ * @param value The source value.
+ * @param index The bit index.
+ * @return The value with the bit cleared.
+ */
+pub func clear_bit(value: u64, index: u32) -> u64 {
+    if (index >= 64) {
+        return value;
+    }
+    return value & ~((1 as u64) << index);
+}
+
+/*!
+ * @brief Toggles one bit.
+ * @param value The source value.
+ * @param index The bit index.
+ * @return The value with the bit toggled.
+ */
+pub func toggle_bit(value: u64, index: u32) -> u64 {
+    if (index >= 64) {
+        return value;
+    }
+    return value ^ ((1 as u64) << index);
+}
+
+/*!
+ * @brief Extracts a field of bits.
+ * @param value The source value.
+ * @param offset The index of the least significant field bit.
+ * @param width The number of bits to extract.
+ * @return The extracted field, right aligned.
+ */
+pub func extract_bits(value: u64, offset: u32, width: u32) -> u64 {
+    if (width == 0 || offset >= 64) {
+        return 0;
+    }
+    let available := 64 - offset;
+    let actual := if (width < available) { width } else { available };
+    return (value >> offset) & mask(actual);
+}
+
+/*!
+ * @brief Inserts a field of bits.
+ * @param value The destination value.
+ * @param field The right-aligned field to insert.
+ * @param offset The index of the least significant destination bit.
+ * @param width The number of bits to insert.
+ * @return The updated value.
+ */
+pub func insert_bits(value: u64, field: u64, offset: u32,
+                     width: u32) -> u64 {
+    if (width == 0 || offset >= 64) {
+        return value;
+    }
+    let available := 64 - offset;
+    let actual := if (width < available) { width } else { available };
+    let field_mask := mask(actual) << offset;
+    return (value & ~field_mask) | ((field & mask(actual)) << offset);
+}
+
+/*!
+ * @brief Sign-extends the low `width` bits of a value.
+ * @param value The value to extend.
+ * @param width The meaningful width, between 1 and 64.
+ * @return The sign-extended 64-bit value.
+ */
+pub func sign_extend(value: u64, width: u32) -> i64 {
+    if (width == 0 || width >= 64) {
+        return value as i64;
+    }
+    let sign := (1 as u64) << (width - 1);
+    let narrowed := value & mask(width);
+    if ((narrowed & sign) != 0) {
+        return (narrowed | ~mask(width)) as i64;
+    }
+    return narrowed as i64;
+}
+
+/*!
+ * @brief A fixed-capacity bitset backed by caller-provided words.
+ */
+pub struct BitSet {
+    words: *mut u64,
+    word_count: usize,
+    bit_count: usize,
+
+    /*!
+     * @brief Creates a bitset over storage supplied by the caller.
+     * @param words The backing words.
+     * @param word_count The number of 64-bit words.
+     * @return A cleared bitset.
+     */
+    pub func BitSet(words: *mut u64, word_count: usize) -> BitSet {
+        let mut bitset := BitSet {
+            words: words,
+            word_count: word_count,
+            bit_count: word_count * 64,
+        };
+        bitset.clear_all();
+        return bitset;
+    }
+
+    /*!
+     * @brief Returns the number of addressable bits.
+     * @return `word_count * 64`.
+     */
+    pub func(self: &BitSet) len() -> usize {
+        return self.bit_count;
+    }
+
+    /*!
+     * @brief Clears every bit.
+     */
+    pub func(self: &mut BitSet) clear_all() -> void {
+        let mut index := 0;
+        while (index < self.word_count) {
+            self.words[index] = 0;
+            index += 1;
+        }
+    }
+
+    /*!
+     * @brief Sets every bit.
+     */
+    pub func(self: &mut BitSet) set_all() -> void {
+        let mut index := 0;
+        while (index < self.word_count) {
+            self.words[index] = 0xFFFFFFFFFFFFFFFF;
+            index += 1;
+        }
+    }
+
+    /*!
+     * @brief Sets one bit.
+     * @param index The bit index.
+     * @return `true` when the index was in range.
+     */
+    pub func(self: &mut BitSet) set(index: usize) -> bool {
+        if (index >= self.bit_count) {
+            return false;
+        }
+        let word := index / 64;
+        let bit := (index % 64) as u32;
+        self.words[word] = set_bit(self.words[word], bit);
+        return true;
+    }
+
+    /*!
+     * @brief Clears one bit.
+     * @param index The bit index.
+     * @return `true` when the index was in range.
+     */
+    pub func(self: &mut BitSet) clear(index: usize) -> bool {
+        if (index >= self.bit_count) {
+            return false;
+        }
+        let word := index / 64;
+        let bit := (index % 64) as u32;
+        self.words[word] = clear_bit(self.words[word], bit);
+        return true;
+    }
+
+    /*!
+     * @brief Toggles one bit.
+     * @param index The bit index.
+     * @return `true` when the index was in range.
+     */
+    pub func(self: &mut BitSet) toggle(index: usize) -> bool {
+        if (index >= self.bit_count) {
+            return false;
+        }
+        let word := index / 64;
+        let bit := (index % 64) as u32;
+        self.words[word] = toggle_bit(self.words[word], bit);
+        return true;
+    }
+
+    /*!
+     * @brief Reads one bit.
+     * @param index The bit index.
+     * @return `true` when the bit is set.
+     */
+    pub func(self: &BitSet) test(index: usize) -> bool {
+        if (index >= self.bit_count) {
+            return false;
+        }
+        let word := index / 64;
+        let bit := (index % 64) as u32;
+        return get_bit(self.words[word], bit);
+    }
+
+    /*!
+     * @brief Counts set bits.
+     * @return The number of set bits in the set.
+     */
+    pub func(self: &BitSet) count_ones() -> usize {
+        let mut total := 0;
+        let mut index := 0;
+        while (index < self.word_count) {
+            total += popcount(self.words[index]) as usize;
+            index += 1;
+        }
+        return total;
+    }
+
+    /*!
+     * @brief Returns `true` when no bits are set.
+     * @return Whether the set is empty.
+     */
+    pub func(self: &BitSet) is_empty() -> bool {
+        return self.count_ones() == 0;
+    }
+}

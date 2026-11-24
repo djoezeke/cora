@@ -1,1 +1,444 @@
+/*!
+ * @file mem.cora
+ * @brief Raw memory operations and typed allocation helpers.
+ *
+ * These functions mirror the classic `memcpy`, `memmove`, `memset`, and
+ * `memcmp` operations while adding typed array allocation on top of
+ * `GlobalAllocator`.  They contain no hidden allocation and never call a
+ * destructor.
+ */
 
+import "core::mem::alloc";
+
+/*!
+ * @brief Copies bytes between non-overlapping regions.
+ * @param destination The destination address.
+ * @param source The source address.
+ * @param count The number of bytes to copy.
+ */
+pub func memcpy(destination: *mut u8, source: *const u8,
+                count: usize) -> void {
+    let mut index := 0;
+    while (index < count) {
+        destination[index] = source[index];
+        index += 1;
+    }
+}
+
+/*!
+ * @brief Copies bytes, supporting overlapping regions.
+ * @param destination The destination address.
+ * @param source The source address.
+ * @param count The number of bytes to copy.
+ */
+pub func memmove(destination: *mut u8, source: *const u8,
+                 count: usize) -> void {
+    if (destination as usize <= source as usize) {
+        memcpy(destination, source, count);
+        return;
+    }
+
+    let mut index := count;
+    while (index > 0) {
+        index -= 1;
+        destination[index] = source[index];
+    }
+}
+
+/*!
+ * @brief Fills a region with a byte value.
+ * @param destination The region to fill.
+ * @param value The byte value to write.
+ * @param count The number of bytes to write.
+ */
+pub func memset(destination: *mut u8, value: u8, count: usize) -> void {
+    let mut index := 0;
+    while (index < count) {
+        destination[index] = value;
+        index += 1;
+    }
+}
+
+/*!
+ * @brief Clears a region to zero bytes.
+ * @param destination The region to clear.
+ * @param count The number of bytes to clear.
+ */
+pub func memzero(destination: *mut u8, count: usize) -> void {
+    memset(destination, 0, count);
+}
+
+/*!
+ * @brief Compares two byte regions lexicographically.
+ * @param left The first region.
+ * @param right The second region.
+ * @param count The number of bytes to compare.
+ * @return A negative value, zero, or a positive value.
+ */
+pub func memcmp(left: *const u8, right: *const u8, count: usize) -> i32 {
+    let mut index := 0;
+    while (index < count) {
+        if (left[index] < right[index]) {
+            return -1;
+        }
+        if (left[index] > right[index]) {
+            return 1;
+        }
+        index += 1;
+    }
+    return 0;
+}
+
+/*!
+ * @brief Returns `true` when two byte regions are identical.
+ * @param left The first region.
+ * @param right The second region.
+ * @param count The number of bytes to compare.
+ * @return Whether the regions contain the same bytes.
+ */
+pub func memeq(left: *const u8, right: *const u8, count: usize) -> bool {
+    return memcmp(left, right, count) == 0;
+}
+
+/*!
+ * @brief Searches a byte region for a value.
+ * @param memory The region to search.
+ * @param count The number of bytes to inspect.
+ * @param value The byte value to find.
+ * @return The offset of the first match, or `usize` maximum when absent.
+ */
+pub func memchr(memory: *const u8, count: usize, value: u8) -> usize {
+    let mut index := 0;
+    while (index < count) {
+        if (memory[index] == value) {
+            return index;
+        }
+        index += 1;
+    }
+    return ~(0 as usize);
+}
+
+/*!
+ * @brief Allocates a byte block from the global allocator.
+ * @param size The number of bytes to allocate.
+ * @return A pointer to the block, or `null` on failure.
+ */
+pub func alloc_bytes(size: usize) -> *mut u8 {
+    let allocator := GlobalAllocator();
+    return allocator.alloc(size, 1);
+}
+
+/*!
+ * @brief Resizes a byte block allocated by `alloc_bytes`.
+ * @param pointer The existing block.
+ * @param old_size The previous size.
+ * @param new_size The requested size.
+ * @return The resized block, or `null` on failure.
+ */
+pub func realloc_bytes(pointer: *mut u8, old_size: usize,
+                       new_size: usize) -> *mut u8 {
+    let allocator := GlobalAllocator();
+    return allocator.realloc(pointer, old_size, new_size, 1);
+}
+
+/*!
+ * @brief Releases a byte block allocated by `alloc_bytes`.
+ * @param pointer The block to release.
+ * @param size The block size.
+ */
+pub func free_bytes(pointer: *mut u8, size: usize) -> void {
+    let allocator := GlobalAllocator();
+    allocator.free(pointer, size, 1);
+}
+
+/*!
+ * @brief Allocates an array of values.
+ * @tparam T The element type.
+ * @param count The number of elements.
+ * @return A typed pointer, or `null` on failure.
+ */
+pub func alloc_array<T>(count: usize) -> *mut T {
+    let allocator := GlobalAllocator();
+    return allocator.alloc_array<T>(count);
+}
+
+/*!
+ * @brief Resizes an array of values.
+ * @tparam T The element type.
+ * @param pointer The existing array.
+ * @param old_count The previous element count.
+ * @param new_count The requested element count.
+ * @return The resized array, or `null` on failure.
+ */
+pub func realloc_array<T>(pointer: *mut T, old_count: usize,
+                          new_count: usize) -> *mut T {
+    let allocator := GlobalAllocator();
+    let old_layout := Layout::array<T>(old_count);
+    let new_layout := Layout::array<T>(new_count);
+    let raw := allocator.realloc(pointer as *mut u8, old_layout.size,
+                                 new_layout.size, new_layout.align);
+    return raw as *mut T;
+}
+
+/*!
+ * @brief Releases an array allocated by `alloc_array`.
+ * @tparam T The element type.
+ * @param pointer The array to release.
+ * @param count The number of elements.
+ */
+pub func free_array<T>(pointer: *mut T, count: usize) -> void {
+    let allocator := GlobalAllocator();
+    allocator.free_array<T>(pointer, count);
+}
+
+/*!
+ * @brief Allocates and zeroes an array of values.
+ * @tparam T The element type.
+ * @param count The number of elements.
+ * @return A zeroed typed pointer, or `null` on failure.
+ */
+pub func calloc_array<T>(count: usize) -> *mut T {
+    let pointer := alloc_array<T>(count);
+    if (pointer != null) {
+        memzero(pointer as *mut u8, sizeof(T) * count);
+    }
+    return pointer;
+}
+
+/*!
+ * @brief Copies values between non-overlapping typed regions.
+ * @tparam T The value type.
+ * @param destination The destination region.
+ * @param source The source region.
+ * @param count The number of values.
+ */
+pub func copy_array<T>(destination: *mut T, source: *const T,
+                       count: usize) -> void {
+    let mut index := 0;
+    while (index < count) {
+        destination[index] = source[index];
+        index += 1;
+    }
+}
+
+/*!
+ * @brief Copies values between possibly overlapping typed regions.
+ * @tparam T The value type.
+ * @param destination The destination region.
+ * @param source The source region.
+ * @param count The number of values.
+ */
+pub func move_array<T>(destination: *mut T, source: *const T,
+                       count: usize) -> void {
+    if (destination as usize <= source as usize) {
+        copy_array(destination, source, count);
+        return;
+    }
+
+    let mut index := count;
+    while (index > 0) {
+        index -= 1;
+        destination[index] = source[index];
+    }
+}
+
+/*!
+ * @brief Fills a typed region with a value.
+ * @tparam T The value type.
+ * @param destination The region to fill.
+ * @param value The value to write into every element.
+ * @param count The number of elements.
+ */
+pub func fill_array<T>(destination: *mut T, value: T, count: usize) -> void {
+    let mut index := 0;
+    while (index < count) {
+        destination[index] = value;
+        index += 1;
+    }
+}
+
+/*!
+ * @brief Swaps two values in memory.
+ * @tparam T The value type.
+ * @param left The first value.
+ * @param right The second value.
+ */
+pub func swap<T>(left: *mut T, right: *mut T) -> void {
+    let temporary := *left;
+    *left = *right;
+    *right = temporary;
+}
+
+/*!
+ * @brief A contiguous, manually managed byte buffer.
+ *
+ * `Buffer` is a small building block for I/O and serialization code.  It owns
+ * its storage and must be released with `deinit`.
+ */
+pub struct Buffer {
+    data: *mut u8,
+    length: usize,
+    capacity: usize,
+
+    /*!
+     * @brief Creates an empty buffer.
+     * @return A buffer with no storage.
+     */
+    pub func Buffer() -> Buffer {
+        return Buffer { data: null, length: 0, capacity: 0 };
+    }
+
+    /*!
+     * @brief Creates a buffer with preallocated storage.
+     * @param capacity The initial capacity in bytes.
+     * @return A buffer with allocated storage, or an empty buffer on failure.
+     */
+    pub func with_capacity(capacity: usize) -> Buffer {
+        let mut buffer := Buffer();
+        if (capacity > 0) {
+            buffer.data = alloc_bytes(capacity);
+            if (buffer.data != null) {
+                buffer.capacity = capacity;
+            }
+        }
+        return buffer;
+    }
+
+    /*!
+     * @brief Returns the number of initialized bytes.
+     * @return The buffer length.
+     */
+    pub func(self: &Buffer) len() -> usize {
+        return self.length;
+    }
+
+    /*!
+     * @brief Returns the allocated capacity.
+     * @return The capacity in bytes.
+     */
+    pub func(self: &Buffer) cap() -> usize {
+        return self.capacity;
+    }
+
+    /*!
+     * @brief Returns `true` when the buffer contains no bytes.
+     * @return Whether the length is zero.
+     */
+    pub func(self: &Buffer) is_empty() -> bool {
+        return self.length == 0;
+    }
+
+    /*!
+     * @brief Returns a pointer to the buffer contents.
+     * @return The first byte, or `null` when empty.
+     */
+    pub func(self: &Buffer) bytes() -> *const u8 {
+        return self.data;
+    }
+
+    /*!
+     * @brief Returns a mutable pointer to the buffer contents.
+     * @return The first writable byte, or `null` when empty.
+     */
+    pub func(self: &mut Buffer) bytes_mut() -> *mut u8 {
+        return self.data;
+    }
+
+    /*!
+     * @brief Ensures that at least `additional` bytes are available.
+     * @param additional The number of additional bytes required.
+     * @return `true` on success.
+     */
+    pub func(self: &mut Buffer) reserve(additional: usize) -> bool {
+        let needed := self.length + additional;
+        if (needed <= self.capacity) {
+            return true;
+        }
+
+        let mut new_capacity := if (self.capacity == 0) { 16 } else {
+            self.capacity
+        };
+        while (new_capacity < needed) {
+            new_capacity = new_capacity * 2;
+        }
+
+        let replacement := realloc_bytes(self.data, self.capacity,
+                                         new_capacity);
+        if (replacement == null) {
+            return false;
+        }
+        self.data = replacement;
+        self.capacity = new_capacity;
+        return true;
+    }
+
+    /*!
+     * @brief Appends bytes to the buffer.
+     * @param source The bytes to append.
+     * @param count The number of bytes.
+     * @return The number of bytes appended.
+     */
+    pub func(self: &mut Buffer) append(source: *const u8,
+                                       count: usize) -> usize {
+        if (!self.reserve(count)) {
+            return 0;
+        }
+        memcpy(self.data + self.length, source, count);
+        self.length += count;
+        return count;
+    }
+
+    /*!
+     * @brief Appends one byte.
+     * @param value The byte to append.
+     * @return `true` on success.
+     */
+    pub func(self: &mut Buffer) push(value: u8) -> bool {
+        if (!self.reserve(1)) {
+            return false;
+        }
+        self.data[self.length] = value;
+        self.length += 1;
+        return true;
+    }
+
+    /*!
+     * @brief Reads bytes from the buffer.
+     * @param destination The destination for the bytes.
+     * @param count The maximum number of bytes to read.
+     * @return The number of bytes copied.
+     */
+    pub func(self: &Buffer) read(destination: *mut u8,
+                                 count: usize) -> usize {
+        let available := self.length;
+        let amount := if (count < available) { count } else { available };
+        memcpy(destination, self.data, amount);
+        return amount;
+    }
+
+    /*!
+     * @brief Discards all bytes while keeping the allocation.
+     */
+    pub func(self: &mut Buffer) clear() -> void {
+        self.length = 0;
+    }
+
+    /*!
+     * @brief Releases the buffer storage.
+     */
+    pub func(self: &mut Buffer) deinit() -> void {
+        if (self.data != null) {
+            free_bytes(self.data, self.capacity);
+        }
+        self.data = null;
+        self.length = 0;
+        self.capacity = 0;
+    }
+
+    /*!
+     * @brief Releases the buffer when it leaves scope.
+     */
+    pub func ~Buffer() -> void {
+        self.deinit();
+    }
+}

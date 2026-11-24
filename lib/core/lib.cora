@@ -1,0 +1,18 @@
+/*!
+ * @file lib.cora
+ * @brief Cora core library entry point.
+ *
+ * The core library is platform independent and suitable for freestanding
+ * targets.  Importing `core::lib` makes the fundamental types, memory
+ * management, numeric utilities, portable vectors, synchronization, time, and
+ * debug facilities available to a program.
+ */
+
+import "core::arch";
+import "core::type";
+import "core::mem::lib";
+import "core::num::lib";
+import "core::simd";
+import "core::sync::lib";
+import "core::time";
+import "core::debug::lib";

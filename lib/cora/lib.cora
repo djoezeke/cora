@@ -1,0 +1,20 @@
+/*!
+ * @file lib.cora
+ * @brief Hosted Cora standard library entry point.
+ *
+ * Importing `cora::lib` brings the platform-independent core library and the
+ * hosted services into scope.  Programs that must run without an operating
+ * system should import `core::lib` directly instead.
+ */
+
+import "core::lib";
+import "cora::build::lib";
+import "cora::crypto::lib";
+import "cora::debug::lib";
+import "cora::io::lib";
+import "cora::meta::lib";
+import "cora::net::lib";
+import "cora::num::lib";
+import "cora::os::lib";
+import "cora::text::lib";
+import "cora::thread::lib";

@@ -1,1 +1,295 @@
+/*!
+ * @file ptr.cora
+ * @brief Raw pointer and address utilities for the Cora core library.
+ *
+ * This module contains the small, allocation-free operations that higher level
+ * containers use to manage storage.  Every function that dereferences memory
+ * documents its safety requirements; callers that cannot prove those
+ * requirements must use an `unsafe` block.
+ */
 
+/*!
+ * @brief A pointer that is known not to be null.
+ * @tparam T The pointed-to type.
+ */
+pub struct NonNull<T> {
+    pointer: *mut T,
+
+    /*!
+     * @brief Wraps a non-null pointer.
+     * @param pointer A pointer that must not be null.
+     * @return A `NonNull` wrapper.
+     */
+    pub func NonNull(pointer: *mut T) -> NonNull<T> {
+        return NonNull<T> { pointer: pointer };
+    }
+
+    /*!
+     * @brief Returns the wrapped pointer.
+     * @return The raw non-null pointer.
+     */
+    pub func(self: &NonNull<T>) as_ptr() -> *mut T {
+        return self.pointer;
+    }
+
+    /*!
+     * @brief Returns the wrapped pointer as a shared pointer.
+     * @return The raw pointer with a read-only view.
+     */
+    pub func(self: &NonNull<T>) as_const_ptr() -> *const T {
+        return self.pointer as *const T;
+    }
+
+    /*!
+     * @brief Returns the address of the wrapped pointer.
+     * @return The numeric address.
+     */
+    pub func(self: &NonNull<T>) address() -> usize {
+        return self.pointer as usize;
+    }
+}
+
+/*!
+ * @brief Returns a null pointer of the requested pointee type.
+ * @tparam T The pointee type.
+ * @return A null `*mut T` value.
+ */
+pub func null<T>() -> *mut T {
+    return null;
+}
+
+/*!
+ * @brief Returns `true` when a pointer is null.
+ * @tparam T The pointee type.
+ * @param pointer The pointer to test.
+ * @return `true` for a null pointer.
+ */
+pub func is_null<T>(pointer: *const T) -> bool {
+    return pointer == null;
+}
+
+/*!
+ * @brief Returns a dangling, well-aligned pointer for a type.
+ *
+ * The pointer must never be dereferenced.  It is useful as the data pointer of
+ * an empty container, where `null` would violate a non-null invariant.
+ *
+ * @tparam T The pointee type.
+ * @return A non-null, non-dereferenceable pointer.
+ */
+pub func dangling<T>() -> *mut T {
+    return align_of<T>() as *mut T;
+}
+
+/*!
+ * @brief Converts a pointer to its numeric address.
+ * @tparam T The pointee type.
+ * @param pointer The pointer to convert.
+ * @return The address as an unsigned integer.
+ */
+pub func address<T>(pointer: *const T) -> usize {
+    return pointer as usize;
+}
+
+/*!
+ * @brief Converts a numeric address to a mutable pointer.
+ * @tparam T The pointee type.
+ * @param value The address to convert.
+ * @return A pointer with the requested type.
+ */
+pub func from_address<T>(value: usize) -> *mut T {
+    return value as *mut T;
+}
+
+/*!
+ * @brief Adds a byte offset to a pointer.
+ * @tparam T The pointee type.
+ * @param pointer The base pointer.
+ * @param offset The byte offset, which may be negative.
+ * @return The adjusted pointer.
+ */
+pub func byte_offset<T>(pointer: *const T, offset: isize) -> *const T {
+    return (pointer as usize + offset as usize) as *const T;
+}
+
+/*!
+ * @brief Adds an element offset to a pointer.
+ * @tparam T The pointee type.
+ * @param pointer The base pointer.
+ * @param count The number of elements to add, which may be negative.
+ * @return The adjusted pointer.
+ */
+pub func offset<T>(pointer: *const T, count: isize) -> *const T {
+    return byte_offset(pointer, count * (sizeof(T) as isize));
+}
+
+/*!
+ * @brief Computes the element distance between two pointers.
+ * @tparam T The pointee type.
+ * @param left The first pointer.
+ * @param right The second pointer.
+ * @return The number of elements from `right` to `left`.
+ */
+pub func diff<T>(left: *const T, right: *const T) -> isize {
+    let left_address := left as usize;
+    let right_address := right as usize;
+    if (left_address >= right_address) {
+        return ((left_address - right_address) / sizeof(T)) as isize;
+    }
+    return -(((right_address - left_address) / sizeof(T)) as isize);
+}
+
+/*!
+ * @brief Reinterprets a pointer as another pointee type.
+ * @tparam T The source pointee type.
+ * @tparam U The destination pointee type.
+ * @param pointer The pointer to convert.
+ * @return A pointer with the destination type.
+ */
+pub func cast<T, U>(pointer: *mut T) -> *mut U {
+    return pointer as *mut U;
+}
+
+/*!
+ * @brief Reads a value from a pointer.
+ *
+ * @tparam T The value type.
+ * @param pointer A valid, aligned pointer to a live value.
+ * @return The value stored at `pointer`.
+ *
+ * @warning The caller must guarantee that `pointer` is valid for reads and
+ *          that reading through it does not violate aliasing rules.
+ */
+pub func read<T>(pointer: *const T) -> T {
+    return *pointer;
+}
+
+/*!
+ * @brief Writes a value through a pointer.
+ *
+ * @tparam T The value type.
+ * @param pointer A valid, aligned pointer to writable storage.
+ * @param value The value to store.
+ *
+ * @warning The caller must guarantee exclusive access for the duration of the
+ *          write and that the storage is properly aligned.
+ */
+pub func write<T>(pointer: *mut T, value: T) -> void {
+    *pointer = value;
+}
+
+/*!
+ * @brief Replaces the value stored at a pointer and returns the old value.
+ * @tparam T The value type.
+ * @param pointer A valid, writable, aligned pointer.
+ * @param value The new value.
+ * @return The previous value.
+ */
+pub func replace<T>(pointer: *mut T, value: T) -> T {
+    let previous := *pointer;
+    *pointer = value;
+    return previous;
+}
+
+/*!
+ * @brief Exchanges the values stored at two pointers.
+ * @tparam T The value type.
+ * @param left The first value location.
+ * @param right The second value location.
+ */
+pub func swap<T>(left: *mut T, right: *mut T) -> void {
+    let temporary := *left;
+    *left = *right;
+    *right = temporary;
+}
+
+/*!
+ * @brief Copies `count` values between non-overlapping regions.
+ * @tparam T The value type.
+ * @param destination The destination region.
+ * @param source The source region.
+ * @param count The number of values to copy.
+ */
+pub func copy_nonoverlapping<T>(destination: *mut T, source: *const T,
+                                count: usize) -> void {
+    let mut index := 0;
+    while (index < count) {
+        destination[index] = source[index];
+        index += 1;
+    }
+}
+
+/*!
+ * @brief Copies `count` values, supporting overlapping regions.
+ * @tparam T The value type.
+ * @param destination The destination region.
+ * @param source The source region.
+ * @param count The number of values to copy.
+ */
+pub func copy<T>(destination: *mut T, source: *const T, count: usize) -> void {
+    if (destination as usize <= source as usize) {
+        let mut index := 0;
+        while (index < count) {
+            destination[index] = source[index];
+            index += 1;
+        }
+        return;
+    }
+
+    let mut index := count;
+    while (index > 0) {
+        index -= 1;
+        destination[index] = source[index];
+    }
+}
+
+/*!
+ * @brief Rounds an address up to the next multiple of an alignment.
+ * @param value The address to align.
+ * @param alignment A non-zero power-of-two alignment.
+ * @return The smallest aligned address greater than or equal to `value`.
+ */
+pub func align_up(value: usize, alignment: usize) -> usize {
+    return (value + alignment - 1) & ~(alignment - 1);
+}
+
+/*!
+ * @brief Rounds an address down to a multiple of an alignment.
+ * @param value The address to align.
+ * @param alignment A non-zero power-of-two alignment.
+ * @return The largest aligned address less than or equal to `value`.
+ */
+pub func align_down(value: usize, alignment: usize) -> usize {
+    return value & ~(alignment - 1);
+}
+
+/*!
+ * @brief Tests whether an address satisfies an alignment.
+ * @param value The address to test.
+ * @param alignment A non-zero power-of-two alignment.
+ * @return `true` when `value` is aligned.
+ */
+pub func is_aligned(value: usize, alignment: usize) -> bool {
+    return (value & (alignment - 1)) == 0;
+}
+
+/*!
+ * @brief Tests whether a pointer satisfies an alignment.
+ * @tparam T The pointee type.
+ * @param pointer The pointer to test.
+ * @param alignment A non-zero power-of-two alignment.
+ * @return `true` when the pointer is aligned.
+ */
+pub func is_aligned_ptr<T>(pointer: *const T, alignment: usize) -> bool {
+    return is_aligned(pointer as usize, alignment);
+}
+
+/*!
+ * @brief Returns the number of bytes needed to reach the next alignment.
+ * @param pointer The pointer to inspect.
+ * @param alignment A non-zero power-of-two alignment.
+ * @return The padding byte count, or zero when already aligned.
+ */
+pub func align_offset<T>(pointer: *const T, alignment: usize) -> usize {
+    return align_up(pointer as usize, alignment) - (pointer as usize);
+}

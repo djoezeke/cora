@@ -1,3 +1,382 @@
+/*!
+ * @file format.cora
+ * @brief Lightweight formatting primitives for hosted Cora programs.
+ *
+ * The formatter writes into caller-provided storage so it never allocates on
+ * its own.  This makes it usable by logging, I/O, and error-reporting code
+ * before the allocator is initialized.
+ */
 
-error!("This library is not available in freestanding mode")
+import "core::type";
 
+/*!
+ * @brief Horizontal alignment used when padding a formatted value.
+ */
+pub enum Align {
+    Left,    //!< Pad on the right.
+    Right,   //!< Pad on the left.
+    Center,  //!< Split padding between both sides.
+}
+
+/*!
+ * @brief Sign policy for signed numbers.
+ */
+pub enum Sign {
+    Minus,     //!< Only negative numbers receive a sign.
+    Plus,      //!< Positive numbers receive a leading `+`.
+    Space,     //!< Positive numbers receive a leading space.
+}
+
+/*!
+ * @brief Description of a single formatted value.
+ */
+pub struct FormatSpec {
+    pub fill: u8,          //!< Padding byte.
+    pub align: Align,      //!< Padding direction.
+    pub sign: Sign,        //!< Sign policy.
+    pub alternate: bool,   //!< Whether to emit a base prefix.
+    pub zero_pad: bool,    //!< Whether to pad with zeroes after the sign.
+    pub width: usize,      //!< Minimum field width.
+    pub precision: usize,  //!< Fractional precision.
+
+    /*!
+     * @brief Creates a default format specification.
+     * @return A specification with space fill, right alignment, and no width.
+     */
+    pub func FormatSpec() -> FormatSpec {
+        return FormatSpec {
+            fill: ' ',
+            align: Align::Right,
+            sign: Sign::Minus,
+            alternate: false,
+            zero_pad: false,
+            width: 0,
+            precision: 6,
+        };
+    }
+
+    /*!
+     * @brief Sets the minimum field width.
+     * @param width The new width.
+     * @return The updated specification.
+     */
+    pub func(self: FormatSpec) with_width(width: usize) -> FormatSpec {
+        return FormatSpec {
+            fill: self.fill,
+            align: self.align,
+            sign: self.sign,
+            alternate: self.alternate,
+            zero_pad: self.zero_pad,
+            width: width,
+            precision: self.precision,
+        };
+    }
+
+    /*!
+     * @brief Sets the padding alignment.
+     * @param align The new alignment.
+     * @return The updated specification.
+     */
+    pub func(self: FormatSpec) with_align(align: Align) -> FormatSpec {
+        return FormatSpec {
+            fill: self.fill,
+            align: align,
+            sign: self.sign,
+            alternate: self.alternate,
+            zero_pad: self.zero_pad,
+            width: self.width,
+            precision: self.precision,
+        };
+    }
+}
+
+/*!
+ * @brief A bounded output buffer with formatting helpers.
+ */
+pub struct Formatter {
+    buffer: *mut u8,
+    capacity: usize,
+    length: usize,
+
+    /*!
+     * @brief Creates a formatter over caller-provided storage.
+     * @param buffer The output buffer.
+     * @param capacity The buffer capacity in bytes.
+     * @return A formatter with an empty output.
+     */
+    pub func Formatter(buffer: *mut u8, capacity: usize) -> Formatter {
+        return Formatter {
+            buffer: buffer,
+            capacity: capacity,
+            length: 0,
+        };
+    }
+
+    /*!
+     * @brief Returns the number of bytes written.
+     * @return The current output length.
+     */
+    pub func(self: &Formatter) len() -> usize {
+        return self.length;
+    }
+
+    /*!
+     * @brief Returns the output buffer pointer.
+     * @return The formatter buffer.
+     */
+    pub func(self: &Formatter) bytes() -> *mut u8 {
+        return self.buffer;
+    }
+
+    /*!
+     * @brief Clears the output without touching the backing storage.
+     */
+    pub func(self: &mut Formatter) clear() -> void {
+        self.length = 0;
+    }
+
+    /*!
+     * @brief Appends one byte.
+     * @param value The byte to append.
+     * @return `true` when the byte fit in the buffer.
+     */
+    pub func(self: &mut Formatter) write_byte(value: u8) -> bool {
+        if (self.length >= self.capacity) {
+            return false;
+        }
+        self.buffer[self.length] = value;
+        self.length += 1;
+        return true;
+    }
+
+    /*!
+     * @brief Appends a byte sequence.
+     * @param source The bytes to append.
+     * @param count The number of bytes.
+     * @return The number of bytes appended.
+     */
+    pub func(self: &mut Formatter) write_bytes(source: *const u8,
+                                               count: usize) -> usize {
+        let mut written := 0;
+        while (written < count && self.write_byte(source[written])) {
+            written += 1;
+        }
+        return written;
+    }
+
+    /*!
+     * @brief Appends a null-terminated string.
+     * @param text The source string.
+     * @return The number of bytes appended.
+     */
+    pub func(self: &mut Formatter) write_cstr(text: *const u8) -> usize {
+        if (text == null) {
+            return 0;
+        }
+        let mut written := 0;
+        while (text[written] != 0) {
+            if (!self.write_byte(text[written])) {
+                break;
+            }
+            written += 1;
+        }
+        return written;
+    }
+
+    /*!
+     * @brief Appends a boolean as `true` or `false`.
+     * @param value The value to format.
+     * @return The number of bytes appended.
+     */
+    pub func(self: &mut Formatter) write_bool(value: bool) -> usize {
+        if (value) {
+            return self.write_cstr("true");
+        }
+        return self.write_cstr("false");
+    }
+
+    /*!
+     * @brief Appends an unsigned integer in the requested base.
+     * @param value The value to format.
+     * @param base The radix, between 2 and 36.
+     * @param uppercase Whether alphabetic digits are uppercase.
+     * @return The number of bytes appended.
+     */
+    pub func(self: &mut Formatter) write_u64_base(value: u64, base: u32,
+                                                  uppercase: bool) -> usize {
+        if (base < 2 || base > 36) {
+            return 0;
+        }
+        if (value == 0) {
+            return if (self.write_byte('0')) { 1 } else { 0 };
+        }
+
+        let mut digits: u8[64] = [0; 64];
+        let mut count := 0;
+        let mut remaining := value;
+        let alphabet := if (uppercase) {
+            "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+        } else {
+            "0123456789abcdefghijklmnopqrstuvwxyz"
+        };
+
+        while (remaining > 0 && count < 64) {
+            let digit := (remaining % base as u64) as usize;
+            digits[count] = alphabet[digit];
+            count += 1;
+            remaining = remaining / base as u64;
+        }
+
+        let mut written := 0;
+        while (count > 0) {
+            count -= 1;
+            if (self.write_byte(digits[count])) {
+                written += 1;
+            } else {
+                break;
+            }
+        }
+        return written;
+    }
+
+    /*!
+     * @brief Appends an unsigned integer in decimal.
+     * @param value The value to format.
+     * @return The number of bytes appended.
+     */
+    pub func(self: &mut Formatter) write_u64(value: u64) -> usize {
+        return self.write_u64_base(value, 10, false);
+    }
+
+    /*!
+     * @brief Appends a signed integer in decimal.
+     * @param value The value to format.
+     * @return The number of bytes appended.
+     */
+    pub func(self: &mut Formatter) write_i64(value: i64) -> usize {
+        let mut written := 0;
+        if (value < 0) {
+            if (self.write_byte('-')) {
+                written += 1;
+            }
+            let magnitude := 0u64 - (value as u64);
+            return written + self.write_u64(magnitude);
+        }
+        return written + self.write_u64(value as u64);
+    }
+
+    /*!
+     * @brief Appends a floating-point value with a fixed precision.
+     * @param value The value to format.
+     * @param precision The number of fractional digits.
+     * @return The number of bytes appended.
+     */
+    pub func(self: &mut Formatter) write_f64(value: f64,
+                                             precision: usize) -> usize {
+        let mut written := 0;
+        if (value != value) {
+            return self.write_cstr("nan");
+        }
+        if (value > 1.7976931348623157e308) {
+            return self.write_cstr("inf");
+        }
+        if (value < -1.7976931348623157e308) {
+            return self.write_cstr("-inf");
+        }
+
+        let negative := value < 0.0;
+        let magnitude := if (negative) { -value } else { value };
+        let whole := magnitude as u64;
+        if (negative) {
+            if (self.write_byte('-')) {
+                written += 1;
+            }
+        }
+        written += self.write_u64(whole);
+
+        if (precision > 0) {
+            if (self.write_byte('.')) {
+                written += 1;
+            }
+            let mut fraction := magnitude - (whole as f64);
+            let mut index := 0;
+            while (index < precision) {
+                fraction *= 10.0;
+                let digit := fraction as u8;
+                if (self.write_byte('0' + digit)) {
+                    written += 1;
+                }
+                fraction -= digit as f64;
+                index += 1;
+            }
+        }
+        return written;
+    }
+
+    /*!
+     * @brief Writes padding characters.
+     * @param count The number of fill bytes.
+     * @return The number of bytes appended.
+     */
+    pub func(self: &mut Formatter) pad(count: usize, fill: u8) -> usize {
+        let mut written := 0;
+        while (written < count) {
+            if (!self.write_byte(fill)) {
+                break;
+            }
+            written += 1;
+        }
+        return written;
+    }
+}
+
+/*!
+ * @brief Formats an unsigned integer into a caller-provided buffer.
+ * @param value The value to format.
+ * @param buffer The output buffer.
+ * @param capacity The buffer capacity.
+ * @return The number of bytes written.
+ */
+pub func format_u64(value: u64, buffer: *mut u8, capacity: usize) -> usize {
+    let mut formatter := Formatter(buffer, capacity);
+    return formatter.write_u64(value);
+}
+
+/*!
+ * @brief Formats a signed integer into a caller-provided buffer.
+ * @param value The value to format.
+ * @param buffer The output buffer.
+ * @param capacity The buffer capacity.
+ * @return The number of bytes written.
+ */
+pub func format_i64(value: i64, buffer: *mut u8, capacity: usize) -> usize {
+    let mut formatter := Formatter(buffer, capacity);
+    return formatter.write_i64(value);
+}
+
+/*!
+ * @brief Formats a float into a caller-provided buffer.
+ * @param value The value to format.
+ * @param precision The number of fractional digits.
+ * @param buffer The output buffer.
+ * @param capacity The buffer capacity.
+ * @return The number of bytes written.
+ */
+pub func format_f64(value: f64, precision: usize, buffer: *mut u8,
+                    capacity: usize) -> usize {
+    let mut formatter := Formatter(buffer, capacity);
+    return formatter.write_f64(value, precision);
+}
+
+/*!
+ * @brief Formats a boolean into a caller-provided buffer.
+ * @param value The value to format.
+ * @param buffer The output buffer.
+ * @param capacity The buffer capacity.
+ * @return The number of bytes written.
+ */
+pub func format_bool(value: bool, buffer: *mut u8,
+                     capacity: usize) -> usize {
+    let mut formatter := Formatter(buffer, capacity);
+    return formatter.write_bool(value);
+}

@@ -1,0 +1,256 @@
+/*!
+ * @file limits.cora
+ * @brief Minimum, maximum, and special values for numeric types.
+ *
+ * The constants in this module are the exact limits of the corresponding
+ * built-in Cora types.  Functions such as `is_finite` and `is_nan` are
+ * provided because IEEE floating-point values cannot be compared with `==` to
+ * detect special values.
+ */
+
+/*!
+ * @brief Minimum and maximum values for an integer type.
+ * @tparam T The integer type.
+ */
+pub struct IntegerLimits<T> {
+    pub min: T,  //!< Smallest representable value.
+    pub max: T,  //!< Largest representable value.
+
+    /*!
+     * @brief Creates an integer-limit record.
+     * @param min The smallest value.
+     * @param max The largest value.
+     * @return The limit record.
+     */
+    pub func IntegerLimits(min: T, max: T) -> IntegerLimits<T> {
+        return IntegerLimits<T> { min: min, max: max };
+    }
+}
+
+/*!
+ * @brief Limits and special values for a floating-point type.
+ * @tparam T The floating-point type.
+ */
+pub struct FloatLimits<T> {
+    pub min: T,          //!< Smallest positive normalized value.
+    pub max: T,          //!< Largest finite value.
+    pub epsilon: T,      //!< Difference between one and the next value.
+    pub infinity: T,     //!< Positive infinity.
+    pub neg_infinity: T, //!< Negative infinity.
+
+    /*!
+     * @brief Creates a floating-point-limit record.
+     * @param min Smallest positive normalized value.
+     * @param max Largest finite value.
+     * @param epsilon Machine epsilon.
+     * @param infinity Positive infinity.
+     * @param neg_infinity Negative infinity.
+     * @return The limit record.
+     */
+    pub func FloatLimits(min: T, max: T, epsilon: T, infinity: T,
+                         neg_infinity: T) -> FloatLimits<T> {
+        return FloatLimits<T> {
+            min: min,
+            max: max,
+            epsilon: epsilon,
+            infinity: infinity,
+            neg_infinity: neg_infinity,
+        };
+    }
+}
+
+//! Smallest `i8` value.
+pub comptime const i8_min: i8 = -128;
+//! Largest `i8` value.
+pub comptime const i8_max: i8 = 127;
+//! Smallest `i16` value.
+pub comptime const i16_min: i16 = -32768;
+//! Largest `i16` value.
+pub comptime const i16_max: i16 = 32767;
+//! Smallest `i32` value.
+pub comptime const i32_min: i32 = -2147483648;
+//! Largest `i32` value.
+pub comptime const i32_max: i32 = 2147483647;
+//! Smallest `i64` value.
+pub comptime const i64_min: i64 = -9223372036854775807 - 1;
+//! Largest `i64` value.
+pub comptime const i64_max: i64 = 9223372036854775807;
+//! Largest `u8` value.
+pub comptime const u8_max: u8 = 255;
+//! Largest `u16` value.
+pub comptime const u16_max: u16 = 65535;
+//! Largest `u32` value.
+pub comptime const u32_max: u32 = 4294967295;
+//! Largest `u64` value.
+pub comptime const u64_max: u64 = 18446744073709551615;
+//! Largest `usize` value.
+pub comptime const usize_max: usize = ~(0 as usize);
+//! Smallest `isize` value.
+pub comptime const isize_min: isize = -9223372036854775807 - 1;
+//! Largest `isize` value.
+pub comptime const isize_max: isize = 9223372036854775807;
+
+//! Smallest positive normalized `f32`.
+pub comptime const f32_min: f32 = 1.1754943508222875e-38;
+//! Largest finite `f32`.
+pub comptime const f32_max: f32 = 3.4028234663852886e38;
+//! Machine epsilon for `f32`.
+pub comptime const f32_epsilon: f32 = 1.1920928955078125e-7;
+//! Smallest positive normalized `f64`.
+pub comptime const f64_min: f64 = 2.2250738585072014e-308;
+//! Largest finite `f64`.
+pub comptime const f64_max: f64 = 1.7976931348623157e308;
+//! Machine epsilon for `f64`.
+pub comptime const f64_epsilon: f64 = 2.220446049250313e-16;
+
+/*!
+ * @brief Returns the limits of a signed 8-bit integer.
+ * @return The `i8` limits.
+ */
+pub func i8_limits() -> IntegerLimits<i8> {
+    return IntegerLimits<i8>(i8_min, i8_max);
+}
+
+/*!
+ * @brief Returns the limits of a signed 16-bit integer.
+ * @return The `i16` limits.
+ */
+pub func i16_limits() -> IntegerLimits<i16> {
+    return IntegerLimits<i16>(i16_min, i16_max);
+}
+
+/*!
+ * @brief Returns the limits of a signed 32-bit integer.
+ * @return The `i32` limits.
+ */
+pub func i32_limits() -> IntegerLimits<i32> {
+    return IntegerLimits<i32>(i32_min, i32_max);
+}
+
+/*!
+ * @brief Returns the limits of a signed 64-bit integer.
+ * @return The `i64` limits.
+ */
+pub func i64_limits() -> IntegerLimits<i64> {
+    return IntegerLimits<i64>(i64_min, i64_max);
+}
+
+/*!
+ * @brief Returns the limits of an unsigned 32-bit integer.
+ * @return The `u32` limits with `min` set to zero.
+ */
+pub func u32_limits() -> IntegerLimits<u32> {
+    return IntegerLimits<u32>(0, u32_max);
+}
+
+/*!
+ * @brief Returns the limits of an unsigned 64-bit integer.
+ * @return The `u64` limits with `min` set to zero.
+ */
+pub func u64_limits() -> IntegerLimits<u64> {
+    return IntegerLimits<u64>(0, u64_max);
+}
+
+/*!
+ * @brief Returns the limits of a pointer-sized unsigned integer.
+ * @return The `usize` limits.
+ */
+pub func usize_limits() -> IntegerLimits<usize> {
+    return IntegerLimits<usize>(0, usize_max);
+}
+
+/*!
+ * @brief Returns positive infinity as a single-precision value.
+ * @return Positive infinity.
+ */
+pub func f32_infinity() -> f32 {
+    return 1.0 / 0.0;
+}
+
+/*!
+ * @brief Returns negative infinity as a single-precision value.
+ * @return Negative infinity.
+ */
+pub func f32_negative_infinity() -> f32 {
+    return -1.0 / 0.0;
+}
+
+/*!
+ * @brief Returns a quiet NaN as a single-precision value.
+ * @return A NaN value.
+ */
+pub func f32_nan() -> f32 {
+    return 0.0 / 0.0;
+}
+
+/*!
+ * @brief Tests whether a single-precision value is NaN.
+ * @param value The value to test.
+ * @return `true` for NaN.
+ */
+pub func is_nan_f32(value: f32) -> bool {
+    return value != value;
+}
+
+/*!
+ * @brief Tests whether a double-precision value is NaN.
+ * @param value The value to test.
+ * @return `true` for NaN.
+ */
+pub func is_nan_f64(value: f64) -> bool {
+    return value != value;
+}
+
+/*!
+ * @brief Tests whether a single-precision value is infinite.
+ * @param value The value to test.
+ * @return `true` for positive or negative infinity.
+ */
+pub func is_infinite_f32(value: f32) -> bool {
+    return value > f32_max || value < -f32_max;
+}
+
+/*!
+ * @brief Tests whether a double-precision value is infinite.
+ * @param value The value to test.
+ * @return `true` for positive or negative infinity.
+ */
+pub func is_infinite_f64(value: f64) -> bool {
+    return value > f64_max || value < -f64_max;
+}
+
+/*!
+ * @brief Tests whether a single-precision value is finite.
+ * @param value The value to test.
+ * @return `true` for values other than NaN and infinity.
+ */
+pub func is_finite_f32(value: f32) -> bool {
+    return !is_nan_f32(value) && !is_infinite_f32(value);
+}
+
+/*!
+ * @brief Tests whether a double-precision value is finite.
+ * @param value The value to test.
+ * @return `true` for values other than NaN and infinity.
+ */
+pub func is_finite_f64(value: f64) -> bool {
+    return !is_nan_f64(value) && !is_infinite_f64(value);
+}
+
+/*!
+ * @brief Returns the single-precision floating-point limits.
+ * @return A `FloatLimits<f32>` record.
+ */
+pub func f32_limits() -> FloatLimits<f32> {
+    return FloatLimits<f32>(f32_min, f32_max, f32_epsilon, f32_infinity(),
+                            f32_negative_infinity());
+}
+
+/*!
+ * @brief Returns the double-precision floating-point limits.
+ * @return A `FloatLimits<f64>` record.
+ */
+pub func f64_limits() -> FloatLimits<f64> {
+    return FloatLimits<f64>(f64_min, f64_max, f64_epsilon, 1.0 / 0.0,
+                            -1.0 / 0.0);
+}

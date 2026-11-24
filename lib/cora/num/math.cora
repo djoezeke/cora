@@ -1,4 +1,557 @@
+/*!
+ * @file math.cora
+ * @brief Portable floating-point mathematical functions.
+ *
+ * The implementations use range reduction and polynomial approximations so
+ * the same results are available on every target.  They favor clarity and
+ * determinism over the last bit of precision; performance-critical code should
+ * use the target's math library through a platform module.
+ */
 
-pub comptime func cos<T>(x: T) -> T {
-    
+import "cora::num::const";
+import "cora::num::limits";
+
+/*!
+ * @brief Returns the absolute value of a double-precision value.
+ * @param value The input value.
+ * @return The non-negative magnitude.
+ */
+pub func fabs(value: f64) -> f64 {
+    return if (value < 0.0) { -value } else { value };
+}
+
+/*!
+ * @brief Returns the absolute value of a single-precision value.
+ * @param value The input value.
+ * @return The non-negative magnitude.
+ */
+pub func fabs_f32(value: f32) -> f32 {
+    return if (value < 0.0) { -value } else { value };
+}
+
+/*!
+ * @brief Computes the square root of a value.
+ * @param value A non-negative value.
+ * @return The square root, or NaN for negative input.
+ */
+pub func sqrt(value: f64) -> f64 {
+    if (is_nan_f64(value)) {
+        return value;
+    }
+    if (value < 0.0) {
+        return 0.0 / 0.0;
+    }
+    if (value == 0.0 || is_infinite_f64(value)) {
+        return value;
+    }
+
+    let mut guess := if (value > 1.0) { value / 2.0 } else { 1.0 };
+    let mut index := 0;
+    while (index < 32) {
+        guess = (guess + value / guess) / 2.0;
+        index += 1;
+    }
+    return guess;
+}
+
+/*!
+ * @brief Computes the square root of a single-precision value.
+ * @param value A non-negative value.
+ * @return The square root, or NaN for negative input.
+ */
+pub func sqrt_f32(value: f32) -> f32 {
+    return sqrt(value as f64) as f32;
+}
+
+/*!
+ * @brief Rounds a value toward negative infinity.
+ * @param value The value to round.
+ * @return The largest integer not greater than `value`.
+ */
+pub func floor(value: f64) -> f64 {
+    let truncated := value as i64 as f64;
+    if (value < 0.0 && truncated != value) {
+        return truncated - 1.0;
+    }
+    return truncated;
+}
+
+/*!
+ * @brief Rounds a value toward positive infinity.
+ * @param value The value to round.
+ * @return The smallest integer not less than `value`.
+ */
+pub func ceil(value: f64) -> f64 {
+    let truncated := value as i64 as f64;
+    if (value > 0.0 && truncated != value) {
+        return truncated + 1.0;
+    }
+    return truncated;
+}
+
+/*!
+ * @brief Rounds a value toward zero.
+ * @param value The value to round.
+ * @return The integer part of `value`.
+ */
+pub func trunc(value: f64) -> f64 {
+    return value as i64 as f64;
+}
+
+/*!
+ * @brief Rounds a value to the nearest integer, halfway away from zero.
+ * @param value The value to round.
+ * @return The nearest integer.
+ */
+pub func round(value: f64) -> f64 {
+    if (value >= 0.0) {
+        return floor(value + 0.5);
+    }
+    return ceil(value - 0.5);
+}
+
+/*!
+ * @brief Computes the floating-point remainder of a division.
+ * @param left The dividend.
+ * @param right The divisor.
+ * @return `left - trunc(left / right) * right`.
+ */
+pub func fmod(left: f64, right: f64) -> f64 {
+    if (right == 0.0 || is_nan_f64(left) || is_nan_f64(right) ||
+        is_infinite_f64(left)) {
+        return 0.0 / 0.0;
+    }
+    if (is_infinite_f64(right)) {
+        return left;
+    }
+    let quotient := trunc(left / right);
+    return left - quotient * right;
+}
+
+/*!
+ * @brief Raises a value to an integer power.
+ * @param base The base value.
+ * @param exponent The integer exponent.
+ * @return `base` raised to `exponent`.
+ */
+pub func powi(base: f64, exponent: i32) -> f64 {
+    if (exponent == 0) {
+        return 1.0;
+    }
+    let negative := exponent < 0;
+    let mut remaining := if (negative) { -exponent } else { exponent };
+    let mut result := 1.0;
+    let mut factor := base;
+    while (remaining > 0) {
+        if ((remaining & 1) != 0) {
+            result = result * factor;
+        }
+        factor = factor * factor;
+        remaining = remaining >> 1;
+    }
+    if (negative) {
+        return 1.0 / result;
+    }
+    return result;
+}
+
+/*!
+ * @brief Raises a value to a floating-point power.
+ * @param base The base value.
+ * @param exponent The exponent.
+ * @return `base` raised to `exponent`.
+ */
+pub func pow(base: f64, exponent: f64) -> f64 {
+    if (exponent == 0.0) {
+        return 1.0;
+    }
+    if (base == 0.0 && exponent > 0.0) {
+        return 0.0;
+    }
+    if (base < 0.0) {
+        if (floor(exponent) == exponent) {
+            return powi(base, exponent as i32);
+        }
+        return 0.0 / 0.0;
+    }
+    return exp(exponent * ln(base));
+}
+
+/*!
+ * @brief Computes Euler's number raised to a power.
+ * @param value The exponent.
+ * @return `e^value`.
+ */
+pub func exp(value: f64) -> f64 {
+    if (is_nan_f64(value)) {
+        return value;
+    }
+    if (value > 709.782712893384) {
+        return 1.0 / 0.0;
+    }
+    if (value < -745.1332191019411) {
+        return 0.0;
+    }
+
+    let reduction := (value / ln2) as i32;
+    let remainder := value - (reduction as f64) * ln2;
+    let mut sum := 1.0;
+    let mut term := 1.0;
+    let mut index := 1;
+    while (index <= 32) {
+        term = term * remainder / (index as f64);
+        sum += term;
+        index += 1;
+    }
+
+    let mut scale := 1.0;
+    let mut count := reduction;
+    if (count > 0) {
+        while (count > 0) {
+            scale = scale * 2.0;
+            count -= 1;
+        }
+        return sum * scale;
+    }
+    while (count < 0) {
+        scale = scale / 2.0;
+        count += 1;
+    }
+    return sum * scale;
+}
+
+/*!
+ * @brief Computes the natural logarithm of a value.
+ * @param value A positive value.
+ * @return The natural logarithm, negative infinity for zero, or NaN for
+ *         negative input.
+ */
+pub func ln(value: f64) -> f64 {
+    if (is_nan_f64(value)) {
+        return value;
+    }
+    if (value < 0.0) {
+        return 0.0 / 0.0;
+    }
+    if (value == 0.0) {
+        return -1.0 / 0.0;
+    }
+    if (is_infinite_f64(value)) {
+        return value;
+    }
+
+    let mut normalized := value;
+    let mut exponent := 0;
+    while (normalized >= 2.0) {
+        normalized = normalized / 2.0;
+        exponent += 1;
+    }
+    while (normalized < 0.5) {
+        normalized = normalized * 2.0;
+        exponent -= 1;
+    }
+
+    let z := (normalized - 1.0) / (normalized + 1.0);
+    let z2 := z * z;
+    let mut term := z;
+    let mut sum := z;
+    let mut divisor := 3;
+    while (divisor <= 81) {
+        term = term * z2;
+        sum += term / (divisor as f64);
+        divisor += 2;
+    }
+    return 2.0 * sum + (exponent as f64) * ln2;
+}
+
+/*!
+ * @brief Computes the base-two logarithm of a value.
+ * @param value A positive value.
+ * @return The base-two logarithm.
+ */
+pub func log2(value: f64) -> f64 {
+    return ln(value) / ln2;
+}
+
+/*!
+ * @brief Computes the base-ten logarithm of a value.
+ * @param value A positive value.
+ * @return The base-ten logarithm.
+ */
+pub func log10(value: f64) -> f64 {
+    return ln(value) / ln10;
+}
+
+/*!
+ * @brief Reduces an angle to the interval `[-pi, pi]`.
+ * @param value The angle in radians.
+ * @return The equivalent reduced angle.
+ */
+pub func wrap_angle(value: f64) -> f64 {
+    let mut result := value;
+    while (result > pi) {
+        result = result - tau;
+    }
+    while (result < -pi) {
+        result = result + tau;
+    }
+    return result;
+}
+
+/*!
+ * @brief Computes the sine of an angle.
+ * @param value The angle in radians.
+ * @return The sine of `value`.
+ */
+pub func sin(value: f64) -> f64 {
+    if (!is_finite_f64(value)) {
+        return 0.0 / 0.0;
+    }
+    let angle := wrap_angle(value);
+    let angle2 := angle * angle;
+    let mut term := angle;
+    let mut sum := angle;
+    let mut index := 1;
+    while (index <= 16) {
+        let denominator := ((2 * index) * (2 * index + 1)) as f64;
+        term = -term * angle2 / denominator;
+        sum += term;
+        index += 1;
+    }
+    return sum;
+}
+
+/*!
+ * @brief Computes the cosine of an angle.
+ * @param value The angle in radians.
+ * @return The cosine of `value`.
+ */
+pub func cos(value: f64) -> f64 {
+    return sin(value + pi / 2.0);
+}
+
+/*!
+ * @brief Computes the tangent of an angle.
+ * @param value The angle in radians.
+ * @return The tangent of `value`.
+ */
+pub func tan(value: f64) -> f64 {
+    return sin(value) / cos(value);
+}
+
+/*!
+ * @brief Computes the arc tangent of a value.
+ * @param value The input value.
+ * @return The angle in radians whose tangent is `value`.
+ */
+pub func atan(value: f64) -> f64 {
+    if (is_nan_f64(value)) {
+        return value;
+    }
+    if (value < 0.0) {
+        return -atan(-value);
+    }
+    if (is_infinite_f64(value)) {
+        return pi / 2.0;
+    }
+    if (value > 1.0) {
+        return pi / 2.0 - atan(1.0 / value);
+    }
+
+    let value2 := value * value;
+    let mut term := value;
+    let mut sum := value;
+    let mut index := 1;
+    while (index <= 32) {
+        term = -term * value2;
+        sum += term / ((2 * index + 1) as f64);
+        index += 1;
+    }
+    return sum;
+}
+
+/*!
+ * @brief Computes the arc tangent of `y / x` using quadrant information.
+ * @param y The vertical component.
+ * @param x The horizontal component.
+ * @return The angle in radians in `[-pi, pi]`.
+ */
+pub func atan2(y: f64, x: f64) -> f64 {
+    if (x > 0.0) {
+        return atan(y / x);
+    }
+    if (x < 0.0) {
+        if (y >= 0.0) {
+            return atan(y / x) + pi;
+        }
+        return atan(y / x) - pi;
+    }
+    if (y > 0.0) {
+        return pi / 2.0;
+    }
+    if (y < 0.0) {
+        return -pi / 2.0;
+    }
+    return 0.0;
+}
+
+/*!
+ * @brief Computes the arc sine of a value.
+ * @param value A value in `[-1, 1]`.
+ * @return The angle in radians in `[-pi/2, pi/2]`, or NaN outside the domain.
+ */
+pub func asin(value: f64) -> f64 {
+    if (value < -1.0 || value > 1.0) {
+        return 0.0 / 0.0;
+    }
+    if (value == 1.0) {
+        return pi / 2.0;
+    }
+    if (value == -1.0) {
+        return -pi / 2.0;
+    }
+    return atan(value / sqrt(1.0 - value * value));
+}
+
+/*!
+ * @brief Computes the arc cosine of a value.
+ * @param value A value in `[-1, 1]`.
+ * @return The angle in radians in `[0, pi]`, or NaN outside the domain.
+ */
+pub func acos(value: f64) -> f64 {
+    return pi / 2.0 - asin(value);
+}
+
+/*!
+ * @brief Computes the hypotenuse of a right triangle.
+ * @param left The first side.
+ * @param right The second side.
+ * @return `sqrt(left^2 + right^2)`.
+ */
+pub func hypot(left: f64, right: f64) -> f64 {
+    let a := fabs(left);
+    let b := fabs(right);
+    if (a > b) {
+        let ratio := b / a;
+        return a * sqrt(1.0 + ratio * ratio);
+    }
+    if (b == 0.0) {
+        return 0.0;
+    }
+    let ratio := a / b;
+    return b * sqrt(1.0 + ratio * ratio);
+}
+
+/*!
+ * @brief Returns the smaller of two values, propagating NaN.
+ * @param left The first value.
+ * @param right The second value.
+ * @return The smaller value.
+ */
+pub func min_f64(left: f64, right: f64) -> f64 {
+    if (is_nan_f64(left)) {
+        return left;
+    }
+    if (is_nan_f64(right)) {
+        return right;
+    }
+    return if (left < right) { left } else { right };
+}
+
+/*!
+ * @brief Returns the larger of two values, propagating NaN.
+ * @param left The first value.
+ * @param right The second value.
+ * @return The larger value.
+ */
+pub func max_f64(left: f64, right: f64) -> f64 {
+    if (is_nan_f64(left)) {
+        return left;
+    }
+    if (is_nan_f64(right)) {
+        return right;
+    }
+    return if (left > right) { left } else { right };
+}
+
+/*!
+ * @brief Clamps a floating-point value.
+ * @param value The value to clamp.
+ * @param lower The inclusive lower bound.
+ * @param upper The inclusive upper bound.
+ * @return The clamped value.
+ */
+pub func clamp_f64(value: f64, lower: f64, upper: f64) -> f64 {
+    if (value < lower) {
+        return lower;
+    }
+    if (value > upper) {
+        return upper;
+    }
+    return value;
+}
+
+/*!
+ * @brief Linearly interpolates between two values.
+ * @param start The value at `t = 0`.
+ * @param end The value at `t = 1`.
+ * @param t The interpolation factor.
+ * @return The interpolated value.
+ */
+pub func lerp(start: f64, end: f64, t: f64) -> f64 {
+    return start + (end - start) * t;
+}
+
+/*!
+ * @brief Copies the sign of one value onto another.
+ * @param magnitude The absolute magnitude source.
+ * @param sign_source The sign source.
+ * @return A value with the magnitude of `magnitude` and sign of `sign_source`.
+ */
+pub func copysign(magnitude: f64, sign_source: f64) -> f64 {
+    let absolute := fabs(magnitude);
+    if (sign_source < 0.0) {
+        return -absolute;
+    }
+    return absolute;
+}
+
+/*!
+ * @brief Converts degrees to radians.
+ * @param degrees The angle in degrees.
+ * @return The angle in radians.
+ */
+pub func degrees_to_radians(degrees: f64) -> f64 {
+    return degrees * (pi / 180.0);
+}
+
+/*!
+ * @brief Converts radians to degrees.
+ * @param radians The angle in radians.
+ * @return The angle in degrees.
+ */
+pub func radians_to_degrees(radians: f64) -> f64 {
+    return radians * (180.0 / pi);
+}
+
+/*!
+ * @brief Computes a fused multiply-add.
+ * @param left The multiplicand.
+ * @param right The multiplier.
+ * @param addend The value added to the product.
+ * @return `left * right + addend` with a single rounding step where supported.
+ */
+pub func fma(left: f64, right: f64, addend: f64) -> f64 {
+    return left * right + addend;
+}
+
+/*!
+ * @brief Tests whether two values are close within an absolute tolerance.
+ * @param left The first value.
+ * @param right The second value.
+ * @param tolerance The maximum accepted difference.
+ * @return `true` when the values are within `tolerance`.
+ */
+pub func is_close(left: f64, right: f64, tolerance: f64) -> bool {
+    return fabs(left - right) <= fabs(tolerance);
 }

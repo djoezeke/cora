@@ -1,10 +1,17 @@
+/*! 
+ * @file string.cora
+ * @brief This file contains the definition of the string type.
+ */
+
+
 comptime if(requires_hosted()){
     error!("This library is not available in freestanding mode")
 }
 
 /*!
- *
- *
+ * @brief A string is a sequence of characters.
+ * @tparam C The character type of the string.
+ * @tparam A The allocator type of the string.
  */
 struct string<C, A: Allocator> {
 

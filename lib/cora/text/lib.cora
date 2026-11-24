@@ -1,0 +1,12 @@
+/*!
+ * @file lib.cora
+ * @brief Hosted text processing entry point.
+ *
+ * Re-exports the string type, formatting helpers, locale conventions, and the
+ * allocation-free regular-expression engine.
+ */
+
+import "cora::text::string";
+import "cora::text::format";
+import "cora::text::locale";
+import "cora::text::regex";

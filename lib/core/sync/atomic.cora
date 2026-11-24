@@ -1,1 +1,310 @@
+/*!
+ * @file atomic.cora
+ * @brief Atomic values and memory-ordering primitives.
+ *
+ * `Atomic<T>` wraps a value that may be accessed concurrently.  Operations are
+ * lowered to the target's atomic library (`__atomic_*` on GCC-compatible
+ * targets) and take an explicit `MemoryOrder` so the caller controls both
+ * compiler and hardware ordering.
+ */
 
+import "core::arch";
+import "core::type";
+
+/*!
+ * @brief Memory ordering for atomic operations.
+ *
+ * The values match the GCC/Clang `__atomic_*` builtins, which makes the
+ * translation to the C backend mechanical.
+ */
+pub enum MemoryOrder : i32 {
+    Relaxed = 0,         //!< No synchronization; only atomicity is guaranteed.
+    Consume = 1,         //!< Data-dependent ordering (rarely used).
+    Acquire = 2,         //!< Prevents later reads/writes from moving before.
+    Release = 3,         //!< Prevents earlier reads/writes from moving after.
+    AcqRel = 4,          //!< Acquire for loads and release for stores.
+    SeqCst = 5,          //!< Sequentially consistent ordering.
+}
+
+/*!
+ * @brief A value supporting atomic load, store, and read-modify-write operations.
+ * @tparam T The stored value type; it must be trivially copyable.
+ */
+pub struct Atomic<T> {
+    value: T,
+
+    /*!
+     * @brief Creates an atomic value.
+     * @param value The initial value.
+     * @return A new atomic cell.
+     */
+    pub func Atomic(value: T) -> Atomic<T> {
+        return Atomic<T> { value: value };
+    }
+
+    /*!
+     * @brief Atomically loads the current value.
+     * @param order The required memory ordering.
+     * @return The loaded value.
+     */
+    pub func(self: &Atomic<T>) load(order: MemoryOrder) -> T {
+        let mut result: T;
+        c_atomic_load(sizeof(T), &self.value as *const T as *const void,
+                      order as i32, &mut result as *mut T as *mut void);
+        return result;
+    }
+
+    /*!
+     * @brief Atomically replaces the current value.
+     * @param value The value to store.
+     * @param order The required memory ordering.
+     */
+    pub func(self: &Atomic<T>) store(value: T, order: MemoryOrder) -> void {
+        c_atomic_store(sizeof(T), &self.value as *const T as *mut void,
+                       &value as *const T as *const void, order as i32);
+    }
+
+    /*!
+     * @brief Atomically exchanges the stored value.
+     * @param value The replacement value.
+     * @param order The required memory ordering.
+     * @return The value that was stored before the exchange.
+     */
+    pub func(self: &Atomic<T>) swap(value: T, order: MemoryOrder) -> T {
+        let mut previous: T;
+        c_atomic_exchange(sizeof(T), &self.value as *const T as *mut void,
+                          &value as *const T as *const void, order as i32,
+                          &mut previous as *mut T as *mut void);
+        return previous;
+    }
+
+    /*!
+     * @brief Atomically compares and exchanges a value.
+     * @param current The expected current value.
+     * @param replacement The value to store on a match.
+     * @param success Ordering used when the comparison succeeds.
+     * @param failure Ordering used when the comparison fails.
+     * @return `true` when the stored value matched `current`.
+     */
+    pub func(self: &Atomic<T>) compare_exchange(current: T, replacement: T,
+                                                success: MemoryOrder,
+                                                failure: MemoryOrder) -> bool {
+        let mut expected := current;
+        return c_atomic_compare_exchange(
+            sizeof(T), &self.value as *const T as *mut void,
+            &mut expected as *mut T as *mut void,
+            &replacement as *const T as *const void, false,
+            success as i32, failure as i32);
+    }
+
+    /*!
+     * @brief A weak variant of compare-exchange.
+     * @param current The expected current value.
+     * @param replacement The value to store on a match.
+     * @param success Ordering used when the comparison succeeds.
+     * @param failure Ordering used when the comparison fails.
+     * @return `true` when the stored value matched `current`.
+     */
+    pub func(self: &Atomic<T>) compare_exchange_weak(current: T,
+                                                     replacement: T,
+                                                     success: MemoryOrder,
+                                                     failure: MemoryOrder) -> bool {
+        let mut expected := current;
+        return c_atomic_compare_exchange(
+            sizeof(T), &self.value as *const T as *mut void,
+            &mut expected as *mut T as *mut void,
+            &replacement as *const T as *const void, true,
+            success as i32, failure as i32);
+    }
+
+    /*!
+     * @brief Atomically adds a value and returns the previous value.
+     * @param operand The value to add.
+     * @param order The required memory ordering.
+     * @return The value stored before the addition.
+     */
+    pub func(self: &Atomic<T>) fetch_add(operand: T,
+                                         order: MemoryOrder) -> T {
+        let mut current := self.load(order);
+        while (true) {
+            let replacement := current + operand;
+            if (self.compare_exchange(current, replacement, order, order)) {
+                return current;
+            }
+            current = self.load(order);
+        }
+    }
+
+    /*!
+     * @brief Atomically subtracts a value and returns the previous value.
+     * @param operand The value to subtract.
+     * @param order The required memory ordering.
+     * @return The value stored before the subtraction.
+     */
+    pub func(self: &Atomic<T>) fetch_sub(operand: T,
+                                         order: MemoryOrder) -> T {
+        let mut current := self.load(order);
+        while (true) {
+            let replacement := current - operand;
+            if (self.compare_exchange(current, replacement, order, order)) {
+                return current;
+            }
+            current = self.load(order);
+        }
+    }
+
+    /*!
+     * @brief Atomically applies a bitwise AND.
+     * @param operand The mask to apply.
+     * @param order The required memory ordering.
+     * @return The value stored before the operation.
+     */
+    pub func(self: &Atomic<T>) fetch_and(operand: T,
+                                         order: MemoryOrder) -> T {
+        let mut current := self.load(order);
+        while (true) {
+            let replacement := current & operand;
+            if (self.compare_exchange(current, replacement, order, order)) {
+                return current;
+            }
+            current = self.load(order);
+        }
+    }
+
+    /*!
+     * @brief Atomically applies a bitwise OR.
+     * @param operand The mask to apply.
+     * @param order The required memory ordering.
+     * @return The value stored before the operation.
+     */
+    pub func(self: &Atomic<T>) fetch_or(operand: T,
+                                        order: MemoryOrder) -> T {
+        let mut current := self.load(order);
+        while (true) {
+            let replacement := current | operand;
+            if (self.compare_exchange(current, replacement, order, order)) {
+                return current;
+            }
+            current = self.load(order);
+        }
+    }
+
+    /*!
+     * @brief Atomically applies a bitwise XOR.
+     * @param operand The mask to apply.
+     * @param order The required memory ordering.
+     * @return The value stored before the operation.
+     */
+    pub func(self: &Atomic<T>) fetch_xor(operand: T,
+                                         order: MemoryOrder) -> T {
+        let mut current := self.load(order);
+        while (true) {
+            let replacement := current ^ operand;
+            if (self.compare_exchange(current, replacement, order, order)) {
+                return current;
+            }
+            current = self.load(order);
+        }
+    }
+
+    /*!
+     * @brief Returns a mutable reference to the stored value.
+     *
+     * This is safe only through an exclusive `&mut Atomic<T>`, where no other
+     * thread can access the cell.
+     *
+     * @return A mutable reference to the value.
+     */
+    pub func(self: &mut Atomic<T>) get_mut() -> &mut T {
+        return &mut self.value;
+    }
+
+    /*!
+     * @brief Consumes the cell and returns the stored value.
+     * @return The stored value.
+     */
+    pub func(self: Atomic<T>) into_inner() -> T {
+        return self.value;
+    }
+
+    /*!
+     * @brief Returns a pointer to the underlying storage.
+     * @return A pointer suitable for platform atomic intrinsics.
+     */
+    pub func(self: &Atomic<T>) as_ptr() -> *mut T {
+        return &self.value as *mut T;
+    }
+}
+
+//! An atomic boolean.
+pub using AtomicBool = Atomic<bool>;
+//! An atomic signed 8-bit integer.
+pub using AtomicI8 = Atomic<i8>;
+//! An atomic signed 16-bit integer.
+pub using AtomicI16 = Atomic<i16>;
+//! An atomic signed 32-bit integer.
+pub using AtomicI32 = Atomic<i32>;
+//! An atomic signed 64-bit integer.
+pub using AtomicI64 = Atomic<i64>;
+//! An atomic unsigned 8-bit integer.
+pub using AtomicU8 = Atomic<u8>;
+//! An atomic unsigned 16-bit integer.
+pub using AtomicU16 = Atomic<u16>;
+//! An atomic unsigned 32-bit integer.
+pub using AtomicU32 = Atomic<u32>;
+//! An atomic unsigned 64-bit integer.
+pub using AtomicU64 = Atomic<u64>;
+//! An atomic pointer-sized unsigned integer.
+pub using AtomicUsize = Atomic<usize>;
+//! An atomic pointer-sized signed integer.
+pub using AtomicIsize = Atomic<isize>;
+
+/*!
+ * @brief Issues a full memory fence.
+ * @param order The required ordering.
+ */
+pub func fence(order: MemoryOrder) -> void {
+    c_atomic_thread_fence(order as i32);
+}
+
+/*!
+ * @brief Issues a compiler-only memory fence.
+ * @param order The required ordering.
+ */
+pub func compiler_fence(order: MemoryOrder) -> void {
+    c_atomic_signal_fence(order as i32);
+}
+
+/*!
+ * @brief Issues a fence for signal handlers.
+ * @param order The required ordering.
+ */
+pub func signal_fence(order: MemoryOrder) -> void {
+    c_atomic_signal_fence(order as i32);
+}
+
+[[link_name("__atomic_load")]]
+extern "C" func c_atomic_load(size: usize, pointer: *const void,
+                              order: i32, result: *mut void) -> void;
+
+[[link_name("__atomic_store")]]
+extern "C" func c_atomic_store(size: usize, pointer: *mut void,
+                               value: *const void, order: i32) -> void;
+
+[[link_name("__atomic_exchange")]]
+extern "C" func c_atomic_exchange(size: usize, pointer: *mut void,
+                                  value: *const void, order: i32,
+                                  result: *mut void) -> void;
+
+[[link_name("__atomic_compare_exchange")]]
+extern "C" func c_atomic_compare_exchange(size: usize, pointer: *mut void,
+                                          expected: *mut void,
+                                          desired: *const void, weak: bool,
+                                          success: i32,
+                                          failure: i32) -> bool;
+
+[[link_name("__atomic_thread_fence")]]
+extern "C" func c_atomic_thread_fence(order: i32) -> void;
+
+[[link_name("__atomic_signal_fence")]]
+extern "C" func c_atomic_signal_fence(order: i32) -> void;

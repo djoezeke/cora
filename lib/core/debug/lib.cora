@@ -1,1 +1,177 @@
+/*!
+ * @file lib.cora
+ * @brief Core debugging, assertion, and termination entry points.
+ *
+ * These facilities are available in freestanding builds.  Hosted builds layer
+ * formatted logging and stack traces on top of this module.
+ */
 
+import "core::arch";
+import "core::type";
+
+/*!
+ * @brief A source location attached to a debug message.
+ */
+pub struct Location {
+    pub file: *const u8,  //!< Null-terminated source file name.
+    pub line: u32,        //!< One-based line number.
+    pub column: u32,      //!< One-based column number.
+
+    /*!
+     * @brief Creates a source location.
+     * @param file Null-terminated file name.
+     * @param line One-based line number.
+     * @param column One-based column number.
+     * @return A source location value.
+     */
+    pub func Location(file: *const u8, line: u32,
+                      column: u32) -> Location {
+        return Location { file: file, line: line, column: column };
+    }
+}
+
+/*!
+ * @brief Information describing a fatal runtime failure.
+ */
+pub struct PanicInfo {
+    pub message: *const u8,  //!< Null-terminated failure message.
+    pub location: Location,  //!< Source location of the failure.
+
+    /*!
+     * @brief Creates panic information.
+     * @param message Null-terminated failure message.
+     * @param location The source location of the failure.
+     * @return A populated panic record.
+     */
+    pub func PanicInfo(message: *const u8,
+                       location: Location) -> PanicInfo {
+        return PanicInfo { message: message, location: location };
+    }
+}
+
+/*!
+ * @brief Aborts the process immediately.
+ * @return This function never returns.
+ */
+pub func abort() -> never {
+    cora_debug_abort();
+}
+
+/*!
+ * @brief Reports a fatal error and terminates the process.
+ * @param message A null-terminated failure message.
+ * @return This function never returns.
+ */
+pub func panic(message: *const u8) -> never {
+    cora_debug_panic(message);
+}
+
+/*!
+ * @brief Raises an assertion failure.
+ * @param condition The condition that must be true.
+ * @param message A null-terminated failure message.
+ */
+pub func assert(condition: bool, message: *const u8) -> void {
+    if (!condition) {
+        panic(message);
+    }
+}
+
+/*!
+ * @brief Raises an assertion failure only in debug builds.
+ * @param condition The condition that must be true.
+ * @param message A null-terminated failure message.
+ */
+pub func debug_assert(condition: bool, message: *const u8) -> void {
+    if (!condition) {
+        panic(message);
+    }
+}
+
+/*!
+ * @brief Asserts that two 32-bit signed integers are equal.
+ * @param left The first value.
+ * @param right The second value.
+ * @param message A null-terminated failure message.
+ */
+pub func assert_eq_i32(left: i32, right: i32, message: *const u8) -> void {
+    if (left != right) {
+        panic(message);
+    }
+}
+
+/*!
+ * @brief Asserts that two pointer-sized unsigned integers are equal.
+ * @param left The first value.
+ * @param right The second value.
+ * @param message A null-terminated failure message.
+ */
+pub func assert_eq_usize(left: usize, right: usize,
+                         message: *const u8) -> void {
+    if (left != right) {
+        panic(message);
+    }
+}
+
+/*!
+ * @brief Asserts that a pointer is not null.
+ * @tparam T The pointee type.
+ * @param pointer The pointer to check.
+ * @param message A null-terminated failure message.
+ */
+pub func assert_non_null<T>(pointer: *const T, message: *const u8) -> void {
+    if (pointer == null) {
+        panic(message);
+    }
+}
+
+/*!
+ * @brief Marks a code path as unreachable.
+ * @return This function never returns.
+ */
+pub func unreachable() -> never {
+    panic("reached unreachable code");
+}
+
+/*!
+ * @brief Marks an unimplemented code path.
+ * @return This function never returns.
+ */
+pub func unimplemented() -> never {
+    panic("unimplemented");
+}
+
+/*!
+ * @brief Marks work that remains to be completed.
+ * @return This function never returns.
+ */
+pub func todo() -> never {
+    panic("not yet implemented");
+}
+
+/*!
+ * @brief Triggers a debugger breakpoint when one is attached.
+ */
+pub func breakpoint() -> void {
+    cora_debug_breakpoint();
+}
+
+/*!
+ * @brief Emits a diagnostic message without terminating the process.
+ * @param message A null-terminated message.
+ */
+pub func eprint_cstr(message: *const u8) -> void {
+    cora_debug_write(message);
+}
+
+[[link_name("cora_debug_abort")]]
+extern "C" func cora_debug_abort() -> void;
+
+[[link_name("cora_debug_panic")]]
+extern "C" func cora_debug_panic(message: *const u8) -> void;
+
+[[link_name("cora_debug_breakpoint")]]
+extern "C" func cora_debug_breakpoint() -> void;
+
+[[link_name("cora_debug_write")]]
+extern "C" func cora_debug_write(message: *const u8) -> void;

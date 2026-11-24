@@ -1,1 +1,280 @@
+/*!
+ * @file type.cora
+ * @brief Fundamental types and type utilities shared by the Cora core library.
+ *
+ * This module is intentionally dependency free.  It defines the vocabulary
+ * types used throughout the core and hosted libraries: ordering, optional
+ * values, results, type metadata, and a few small generic helpers.
+ */
 
+/*!
+ * @brief The result of comparing two values.
+ */
+pub enum Ordering : i8 {
+    Less = -1,    //!< The left operand is smaller.
+    Equal = 0,    //!< Both operands compare equal.
+    Greater = 1,  //!< The left operand is larger.
+}
+
+/*!
+ * @brief A value that may or may not be present.
+ * @tparam T The contained value type.
+ */
+pub enum Option<T> {
+    None,      //!< No value is present.
+    Some(T),   //!< A value is present.
+}
+
+/*!
+ * @brief A value that is either a success or an error.
+ * @tparam T The success value type.
+ * @tparam E The error value type.
+ */
+pub enum Result<T, E> {
+    Ok(T),    //!< The operation succeeded.
+    Err(E),   //!< The operation failed.
+}
+
+/*!
+ * @brief A type identifier suitable for diagnostics and reflection tables.
+ */
+pub struct TypeId {
+    value: usize,
+
+    /*!
+     * @brief Creates a type identifier from a stable integer value.
+     * @param value The integer representation of the identifier.
+     * @return A new type identifier.
+     */
+    pub func TypeId(value: usize) -> TypeId {
+        return TypeId { value: value };
+    }
+
+    /*!
+     * @brief Returns the integer representation of this identifier.
+     * @return The stable numeric identifier.
+     */
+    pub func(self: &TypeId) raw() -> usize {
+        return self.value;
+    }
+
+    /*!
+     * @brief Compares two type identifiers.
+     * @param other The identifier to compare against.
+     * @return `true` when both identifiers refer to the same type.
+     */
+    pub func(self: &TypeId) equals(other: TypeId) -> bool {
+        return self.value == other.value;
+    }
+}
+
+/*!
+ * @brief Compile-time metadata describing a type.
+ */
+pub struct TypeInfo {
+    pub size: usize,      //!< Size of the type in bytes.
+    pub align: usize,     //!< Required alignment of the type in bytes.
+    pub is_copy: bool,    //!< Whether values of the type are trivially copyable.
+    pub is_signed: bool,  //!< Whether the type is a signed numeric type.
+
+    /*!
+     * @brief Creates type metadata.
+     * @param size Size in bytes.
+     * @param align Alignment in bytes.
+     * @param is_copy Whether the type is trivially copyable.
+     * @param is_signed Whether the type is signed.
+     * @return A populated metadata record.
+     */
+    pub func TypeInfo(size: usize, align: usize, is_copy: bool,
+                      is_signed: bool) -> TypeInfo {
+        return TypeInfo {
+            size: size,
+            align: align,
+            is_copy: is_copy,
+            is_signed: is_signed,
+        };
+    }
+}
+
+/*!
+ * @brief Returns compile-time metadata for a type.
+ * @tparam T The type to inspect.
+ * @return Size and alignment information for `T`.
+ */
+pub comptime func type_info<T>() -> TypeInfo {
+    return TypeInfo {
+        size: sizeof(T),
+        align: alignof(T),
+        is_copy: true,
+        is_signed: false,
+    };
+}
+
+/*!
+ * @brief Returns the size of a type in bytes.
+ * @tparam T The type to measure.
+ * @return The size of `T`.
+ */
+pub comptime func size_of<T>() -> usize {
+    return sizeof(T);
+}
+
+/*!
+ * @brief Returns the alignment of a type in bytes.
+ * @tparam T The type to inspect.
+ * @return The required alignment of `T`.
+ */
+pub comptime func align_of<T>() -> usize {
+    return alignof(T);
+}
+
+/*!
+ * @brief Returns the number of elements in a fixed-size array.
+ * @tparam T The element type.
+ * @tparam N The array length.
+ * @param array The array to inspect.
+ * @return The array length `N`.
+ */
+pub comptime func count_of<T, const N: usize>(array: &T[N]) -> usize {
+    return N;
+}
+
+/*!
+ * @brief Returns `true` when an optional value contains a value.
+ * @tparam T The contained value type.
+ * @param value The optional value to inspect.
+ * @return `true` for `Option<T>::Some`.
+ */
+pub func is_some<T>(value: Option<T>) -> bool {
+    return match (value) {
+        Option<T>::Some(_) => true,
+        Option<T>::None => false,
+    };
+}
+
+/*!
+ * @brief Returns `true` when an optional value is empty.
+ * @tparam T The contained value type.
+ * @param value The optional value to inspect.
+ * @return `true` for `Option<T>::None`.
+ */
+pub func is_none<T>(value: Option<T>) -> bool {
+    return !is_some(value);
+}
+
+/*!
+ * @brief Returns the contained value or a fallback.
+ * @tparam T The contained value type.
+ * @param value The optional value.
+ * @param fallback The value returned when `value` is empty.
+ * @return The contained value or `fallback`.
+ */
+pub func unwrap_or<T>(value: Option<T>, fallback: T) -> T {
+    return match (value) {
+        Option<T>::Some(inner) => inner,
+        Option<T>::None => fallback,
+    };
+}
+
+/*!
+ * @brief Applies a function to the contained value.
+ * @tparam T The input value type.
+ * @tparam U The output value type.
+ * @param value The optional value.
+ * @param operation The transformation to apply.
+ * @return The transformed optional value.
+ */
+pub func map_option<T, U>(value: Option<T>, operation: func(T) -> U) -> Option<U> {
+    return match (value) {
+        Option<T>::Some(inner) => Option<U>::Some(operation(inner)),
+        Option<T>::None => Option<U>::None,
+    };
+}
+
+/*!
+ * @brief Returns `true` when a result contains a success value.
+ * @tparam T The success type.
+ * @tparam E The error type.
+ * @param value The result to inspect.
+ * @return `true` for `Result<T, E>::Ok`.
+ */
+pub func is_ok<T, E>(value: Result<T, E>) -> bool {
+    return match (value) {
+        Result<T, E>::Ok(_) => true,
+        Result<T, E>::Err(_) => false,
+    };
+}
+
+/*!
+ * @brief Returns `true` when a result contains an error value.
+ * @tparam T The success type.
+ * @tparam E The error type.
+ * @param value The result to inspect.
+ * @return `true` for `Result<T, E>::Err`.
+ */
+pub func is_err<T, E>(value: Result<T, E>) -> bool {
+    return !is_ok(value);
+}
+
+/*!
+ * @brief Returns the success value or a fallback.
+ * @tparam T The success type.
+ * @tparam E The error type.
+ * @param value The result to inspect.
+ * @param fallback The value returned for an error.
+ * @return The success value or `fallback`.
+ */
+pub func result_or<T, E>(value: Result<T, E>, fallback: T) -> T {
+    return match (value) {
+        Result<T, E>::Ok(inner) => inner,
+        Result<T, E>::Err(_) => fallback,
+    };
+}
+
+/*!
+ * @brief Applies a transformation to the success value of a result.
+ * @tparam T The input success type.
+ * @tparam U The output success type.
+ * @tparam E The error type.
+ * @param value The result to transform.
+ * @param operation The transformation to apply.
+ * @return A result containing the transformed success value.
+ */
+pub func map_result<T, U, E>(value: Result<T, E>,
+                             operation: func(T) -> U) -> Result<U, E> {
+    return match (value) {
+        Result<T, E>::Ok(inner) => Result<U, E>::Ok(operation(inner)),
+        Result<T, E>::Err(error) => Result<U, E>::Err(error),
+    };
+}
+
+/*!
+ * @brief Exchanges two values.
+ * @tparam T The value type.
+ * @param left The first value.
+ * @param right The second value.
+ */
+pub func swap<T>(left: &mut T, right: &mut T) -> void {
+    let temporary := *left;
+    *left = *right;
+    *right = temporary;
+}
+
+/*!
+ * @brief Returns the first argument unchanged.
+ * @tparam T The value type.
+ * @param value The value to return.
+ * @return `value`.
+ */
+pub func identity<T>(value: T) -> T {
+    return value;
+}
+
+/*!
+ * @brief Discards a value explicitly.
+ * @tparam T The value type.
+ * @param value The value to discard.
+ */
+pub func drop<T>(value: T) -> void {
+    let unused := value;
+}

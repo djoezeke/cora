@@ -1,1 +1,154 @@
+/*!
+ * @file spin.cora
+ * @brief Spin locks and scoped guards.
+ *
+ * Spin locks are appropriate only for very short critical sections.  The
+ * lock owns its protected value, so the only way to reach the value is through
+ * a `SpinGuard` returned by `lock` or `try_lock`.
+ */
 
+import "core::arch";
+import "core::sync::atomic";
+import "core::type";
+
+/*!
+ * @brief A mutual-exclusion lock that busy-waits for ownership.
+ * @tparam T The protected value type.
+ */
+pub struct SpinLock<T> {
+    locked: Atomic<bool>,
+    value: T,
+
+    /*!
+     * @brief Creates an unlocked spin lock.
+     * @param value The protected value.
+     * @return A new unlocked lock.
+     */
+    pub func SpinLock(value: T) -> SpinLock<T> {
+        return SpinLock<T> {
+            locked: Atomic<bool>(false),
+            value: value,
+        };
+    }
+
+    /*!
+     * @brief Acquires the lock, waiting until it becomes available.
+     * @return A guard that releases the lock when it leaves scope.
+     */
+    pub func(self: &mut SpinLock<T>) lock() -> SpinGuard<T> {
+        while (true) {
+            if (self.locked.compare_exchange(false, true,
+                                             MemoryOrder::Acquire,
+                                             MemoryOrder::Relaxed)) {
+                return SpinGuard<T>(self as *mut SpinLock<T>);
+            }
+            while (self.locked.load(MemoryOrder::Relaxed)) {
+                cpu_relax();
+            }
+        }
+    }
+
+    /*!
+     * @brief Attempts to acquire the lock without waiting.
+     * @return A guard on success, or `Option::None` when already locked.
+     */
+    pub func(self: &mut SpinLock<T>) try_lock() -> Option<SpinGuard<T>> {
+        if (self.locked.compare_exchange(false, true, MemoryOrder::Acquire,
+                                         MemoryOrder::Relaxed)) {
+            return Option<SpinGuard<T>>::Some(
+                SpinGuard<T>(self as *mut SpinLock<T>));
+        }
+        return Option<SpinGuard<T>>::None;
+    }
+
+    /*!
+     * @brief Releases the lock.
+     */
+    pub func(self: &mut SpinLock<T>) unlock() -> void {
+        self.locked.store(false, MemoryOrder::Release);
+    }
+
+    /*!
+     * @brief Tests whether the lock is currently held.
+     * @return `true` when locked.
+     */
+    pub func(self: &SpinLock<T>) is_locked() -> bool {
+        return self.locked.load(MemoryOrder::Relaxed);
+    }
+
+    /*!
+     * @brief Returns the protected value without locking.
+     *
+     * This is sound only when the caller has exclusive access to the lock.
+     *
+     * @return A mutable reference to the value.
+     */
+    pub func(self: &mut SpinLock<T>) get_mut() -> &mut T {
+        return &mut self.value;
+    }
+
+    /*!
+     * @brief Consumes the lock and returns the protected value.
+     * @return The protected value.
+     */
+    pub func(self: SpinLock<T>) into_inner() -> T {
+        return self.value;
+    }
+}
+
+/*!
+ * @brief Scoped ownership of a `SpinLock`.
+ * @tparam T The protected value type.
+ */
+pub struct SpinGuard<T> {
+    lock: *mut SpinLock<T>,
+    active: bool,
+
+    /*!
+     * @brief Creates a guard for a locked spin lock.
+     * @param lock A pointer to the lock that is already held.
+     * @return A new guard.
+     */
+    pub func SpinGuard(lock: *mut SpinLock<T>) -> SpinGuard<T> {
+        return SpinGuard<T> { lock: lock, active: true };
+    }
+
+    /*!
+     * @brief Returns a shared reference to the protected value.
+     * @return The protected value.
+     */
+    pub func(self: &SpinGuard<T>) get() -> &T {
+        return &self.lock.value;
+    }
+
+    /*!
+     * @brief Returns a mutable reference to the protected value.
+     * @return The protected value.
+     */
+    pub func(self: &mut SpinGuard<T>) get_mut() -> &mut T {
+        return &mut self.lock.value;
+    }
+
+    /*!
+     * @brief Releases the lock before the guard leaves scope.
+     */
+    pub func(self: &mut SpinGuard<T>) release() -> void {
+        if (self.active) {
+            self.lock.unlock();
+            self.active = false;
+        }
+    }
+
+    /*!
+     * @brief Releases the lock when the guard is destroyed.
+     */
+    pub func ~SpinGuard() -> void {
+        if (self.active) {
+            self.lock.unlock();
+            self.active = false;
+        }
+    }
+}
+
+//! Conventional alias for a spin-protected value.
+pub using SpinMutex<T> = SpinLock<T>;

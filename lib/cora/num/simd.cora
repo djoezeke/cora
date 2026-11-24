@@ -1,0 +1,263 @@
+/*!
+ * @file simd.cora
+ * @brief Single-precision and double-precision vector conveniences.
+ *
+ * `core::simd` provides the portable `Simd<T, N>` container and its arithmetic
+ * operations.  This module adds the math helpers that are only meaningful for
+ * floating-point lanes and a few typed wrappers for the common vector widths.
+ */
+
+import "core::simd";
+import "cora::num::math";
+
+/*!
+ * @brief Loads lanes from a contiguous array.
+ * @tparam T The lane type.
+ * @tparam N The number of lanes.
+ * @param source The source array.
+ * @return A vector containing the source lanes.
+ */
+pub func load_unaligned<T, const N: usize>(source: *const T) -> Simd<T, N> {
+    return Simd<T, N>::load(source);
+}
+
+/*!
+ * @brief Stores lanes to a contiguous array.
+ * @tparam T The lane type.
+ * @tparam N The number of lanes.
+ * @param value The vector to store.
+ * @param destination The destination array.
+ */
+pub func store_unaligned<T, const N: usize>(value: Simd<T, N>,
+                                            destination: *mut T) -> void {
+    value.store(destination);
+}
+
+/*!
+ * @brief Creates a vector with every lane set to a value.
+ * @tparam T The lane type.
+ * @tparam N The number of lanes.
+ * @param value The lane value.
+ * @return A splatted vector.
+ */
+pub func splat<T, const N: usize>(value: T) -> Simd<T, N> {
+    return Simd<T, N>::splat(value);
+}
+
+/*!
+ * @brief Clamps every lane to an inclusive interval.
+ * @tparam T The lane type.
+ * @tparam N The number of lanes.
+ * @param value The vector to clamp.
+ * @param lower The inclusive lower bound for each lane.
+ * @param upper The inclusive upper bound for each lane.
+ * @return The clamped vector.
+ */
+pub func clamp<T, const N: usize>(value: Simd<T, N>, lower: Simd<T, N>,
+                                  upper: Simd<T, N>) -> Simd<T, N> {
+    return value.max(lower).min(upper);
+}
+
+/*!
+ * @brief Interpolates between two vectors lane by lane.
+ * @tparam T The lane type.
+ * @tparam N The number of lanes.
+ * @param start The vector at `factor = 0`.
+ * @param end The vector at `factor = 1`.
+ * @param factor The interpolation factor for every lane.
+ * @return The interpolated vector.
+ */
+pub func lerp<T, const N: usize>(start: Simd<T, N>, end: Simd<T, N>,
+                                 factor: T) -> Simd<T, N> {
+    let mut result := start;
+    let mut index := 0;
+    while (index < N) {
+        result.set_lane(index, start.lane(index) +
+                               (end.lane(index) - start.lane(index)) * factor);
+        index += 1;
+    }
+    return result;
+}
+
+/*!
+ * @brief Loads four single-precision values.
+ * @param source The source array.
+ * @return A four-lane vector.
+ */
+pub func load_f32x4(source: *const f32) -> f32x4 {
+    return f32x4::load(source);
+}
+
+/*!
+ * @brief Stores four single-precision values.
+ * @param value The vector to store.
+ * @param destination The destination array.
+ */
+pub func store_f32x4(value: f32x4, destination: *mut f32) -> void {
+    value.store(destination);
+}
+
+/*!
+ * @brief Splats four single-precision lanes.
+ * @param value The lane value.
+ * @return A four-lane vector.
+ */
+pub func splat_f32x4(value: f32) -> f32x4 {
+    return f32x4::splat(value);
+}
+
+/*!
+ * @brief Computes the absolute value of every lane.
+ * @param value The input vector.
+ * @return The lane-wise absolute value.
+ */
+pub func abs_f32x4(value: f32x4) -> f32x4 {
+    let mut result := value;
+    let mut index := 0;
+    while (index < 4) {
+        result.set_lane(index, fabs_f32(value.lane(index)));
+        index += 1;
+    }
+    return result;
+}
+
+/*!
+ * @brief Computes the square root of every lane.
+ * @param value The input vector.
+ * @return The lane-wise square root.
+ */
+pub func sqrt_f32x4(value: f32x4) -> f32x4 {
+    let mut result := value;
+    let mut index := 0;
+    while (index < 4) {
+        result.set_lane(index, sqrt_f32(value.lane(index)));
+        index += 1;
+    }
+    return result;
+}
+
+/*!
+ * @brief Computes the dot product of two four-lane vectors.
+ * @param left The first vector.
+ * @param right The second vector.
+ * @return The sum of the lane products.
+ */
+pub func dot_f32x4(left: f32x4, right: f32x4) -> f32 {
+    return left.mul(right).reduce_add();
+}
+
+/*!
+ * @brief Computes the Euclidean length of a four-lane vector.
+ * @param value The input vector.
+ * @return The square root of the dot product with itself.
+ */
+pub func length_f32x4(value: f32x4) -> f32 {
+    return sqrt_f32(dot_f32x4(value, value));
+}
+
+/*!
+ * @brief Normalizes a four-lane vector.
+ * @param value The input vector.
+ * @return A unit-length vector, or the zero vector for zero input.
+ */
+pub func normalize_f32x4(value: f32x4) -> f32x4 {
+    let length := length_f32x4(value);
+    if (length == 0.0) {
+        return f32x4::splat(0.0);
+    }
+    return value.div(f32x4::splat(length));
+}
+
+/*!
+ * @brief Loads two double-precision values.
+ * @param source The source array.
+ * @return A two-lane vector.
+ */
+pub func load_f64x2(source: *const f64) -> f64x2 {
+    return f64x2::load(source);
+}
+
+/*!
+ * @brief Stores two double-precision values.
+ * @param value The vector to store.
+ * @param destination The destination array.
+ */
+pub func store_f64x2(value: f64x2, destination: *mut f64) -> void {
+    value.store(destination);
+}
+
+/*!
+ * @brief Splats two double-precision lanes.
+ * @param value The lane value.
+ * @return A two-lane vector.
+ */
+pub func splat_f64x2(value: f64) -> f64x2 {
+    return f64x2::splat(value);
+}
+
+/*!
+ * @brief Computes the absolute value of every lane.
+ * @param value The input vector.
+ * @return The lane-wise absolute value.
+ */
+pub func abs_f64x2(value: f64x2) -> f64x2 {
+    let mut result := value;
+    let mut index := 0;
+    while (index < 2) {
+        result.set_lane(index, fabs(value.lane(index)));
+        index += 1;
+    }
+    return result;
+}
+
+/*!
+ * @brief Computes the square root of every lane.
+ * @param value The input vector.
+ * @return The lane-wise square root.
+ */
+pub func sqrt_f64x2(value: f64x2) -> f64x2 {
+    let mut result := value;
+    let mut index := 0;
+    while (index < 2) {
+        result.set_lane(index, sqrt(value.lane(index)));
+        index += 1;
+    }
+    return result;
+}
+
+/*!
+ * @brief Computes the dot product of two two-lane vectors.
+ * @param left The first vector.
+ * @param right The second vector.
+ * @return The sum of the lane products.
+ */
+pub func dot_f64x2(left: f64x2, right: f64x2) -> f64 {
+    return left.mul(right).reduce_add();
+}
+
+/*!
+ * @brief Sums the lanes of a signed 32-bit vector.
+ * @param value The input vector.
+ * @return The scalar sum.
+ */
+pub func sum_i32x4(value: i32x4) -> i32 {
+    return value.reduce_add();
+}
+
+/*!
+ * @brief Returns the smallest lane of a signed 32-bit vector.
+ * @param value The input vector.
+ * @return The minimum lane value.
+ */
+pub func min_i32x4(value: i32x4) -> i32 {
+    return value.reduce_min();
+}
+
+/*!
+ * @brief Returns the largest lane of a signed 32-bit vector.
+ * @param value The input vector.
+ * @return The maximum lane value.
+ */
+pub func max_i32x4(value: i32x4) -> i32 {
+    return value.reduce_max();
+}

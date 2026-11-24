@@ -1,0 +1,643 @@
+/*!
+ * @file regex.cora
+ * @brief A small, allocation-free regular-expression engine.
+ *
+ * The engine supports the practical core of regular expressions:
+ *
+ * - literals and escaped literals;
+ * - `.`, `\d`, `\w`, and `\s` character classes;
+ * - bracket classes such as `[a-z]` and `[^0-9]`;
+ * - the quantifiers `*`, `+`, and `?`;
+ * - the anchors `^` and `$`.
+ *
+ * Groups, backreferences, and alternation are intentionally left to a future
+ * richer engine.  The matcher never allocates, so it is suitable for parsers,
+ * log filters, and constrained runtimes.
+ */
+
+import "core::type";
+
+/*!
+ * @brief Reasons a pattern may be rejected.
+ */
+pub enum RegexError {
+    UnexpectedEnd,     //!< The pattern ended in the middle of an atom.
+    UnclosedClass,     //!< A bracket class was not terminated.
+    InvalidRange,      //!< A character range is reversed or malformed.
+    TrailingEscape,    //!< A backslash is the final pattern byte.
+}
+
+/*!
+ * @brief A half-open match range `[start, end)` in the subject text.
+ */
+pub struct Match {
+    pub start: usize,  //!< Index of the first matched byte.
+    pub end: usize,    //!< Index one past the last matched byte.
+
+    /*!
+     * @brief Creates a match range.
+     * @param start The first byte index.
+     * @param end The index one past the last byte.
+     * @return The match range.
+     */
+    pub func Match(start: usize, end: usize) -> Match {
+        return Match { start: start, end: end };
+    }
+
+    /*!
+     * @brief Returns the number of matched bytes.
+     * @return `end - start`.
+     */
+    pub func(self: &Match) len() -> usize {
+        return self.end - self.start;
+    }
+
+    /*!
+     * @brief Returns `true` when the match is empty.
+     * @return Whether `start == end`.
+     */
+    pub func(self: &Match) is_empty() -> bool {
+        return self.start == self.end;
+    }
+
+    /*!
+     * @brief Tests whether a byte index lies inside the match.
+     * @param index The byte index to test.
+     * @return `true` when `start <= index < end`.
+     */
+    pub func(self: &Match) contains(index: usize) -> bool {
+        return index >= self.start && index < self.end;
+    }
+}
+
+/*!
+ * @brief A compiled pattern borrowed from caller-owned storage.
+ */
+pub struct Regex {
+    pattern: *const u8,
+    length: usize,
+    anchored_start: bool,
+    anchored_end: bool,
+
+    /*!
+     * @brief Compiles a null-terminated pattern.
+     * @param pattern The pattern text.
+     * @return A compiled regex, or an error for an invalid pattern.
+     */
+    pub func compile(pattern: *const u8) -> Result<Regex, RegexError> {
+        if (pattern == null) {
+            return Result<Regex, RegexError>::Err(
+                RegexError::UnexpectedEnd);
+        }
+        let mut length := 0;
+        while (pattern[length] != 0) {
+            length += 1;
+        }
+        return Regex::compile_n(pattern, length);
+    }
+
+    /*!
+     * @brief Compiles a pattern with an explicit byte length.
+     * @param pattern The pattern text.
+     * @param length The pattern length in bytes.
+     * @return A compiled regex, or an error for an invalid pattern.
+     */
+    pub func compile_n(pattern: *const u8,
+                       length: usize) -> Result<Regex, RegexError> {
+        let validation := validate_pattern(pattern, length);
+        if (is_err(validation)) {
+            return Result<Regex, RegexError>::Err(
+                match (validation) {
+                    Result<void, RegexError>::Ok(_) =>
+                        RegexError::UnexpectedEnd,
+                    Result<void, RegexError>::Err(error) => error,
+                });
+        }
+
+        let mut anchored_start := false;
+        let mut anchored_end := false;
+        if (length > 0 && pattern[0] == '^') {
+            anchored_start = true;
+        }
+        if (length > 0 && pattern[length - 1] == '$' &&
+            !is_escaped(pattern, length, length - 1)) {
+            anchored_end = true;
+        }
+
+        return Result<Regex, RegexError>::Ok(Regex {
+            pattern: pattern,
+            length: length,
+            anchored_start: anchored_start,
+            anchored_end: anchored_end,
+        });
+    }
+
+    /*!
+     * @brief Returns the pattern text.
+     * @return A borrowed pointer to the pattern.
+     */
+    pub func(self: &Regex) pattern() -> *const u8 {
+        return self.pattern;
+    }
+
+    /*!
+     * @brief Returns the pattern length.
+     * @return The number of pattern bytes.
+     */
+    pub func(self: &Regex) len() -> usize {
+        return self.length;
+    }
+
+    /*!
+     * @brief Tests whether the pattern matches anywhere in a string.
+     * @param text The null-terminated subject.
+     * @return `true` when at least one match exists.
+     */
+    pub func(self: &Regex) is_match(text: *const u8) -> bool {
+        return self.find(text).start != not_found();
+    }
+
+    /*!
+     * @brief Finds the first match in a null-terminated string.
+     * @param text The subject string.
+     * @return The first match, or a match whose `start` is `not_found()`.
+     */
+    pub func(self: &Regex) find(text: *const u8) -> Match {
+        let mut length := 0;
+        while (text[length] != 0) {
+            length += 1;
+        }
+        return self.find_n(text, length);
+    }
+
+    /*!
+     * @brief Finds the first match in a byte string.
+     * @param text The subject bytes.
+     * @param length The subject length.
+     * @return The first match, or `Match(not_found(), not_found())`.
+     */
+    pub func(self: &Regex) find_n(text: *const u8,
+                                  length: usize) -> Match {
+        let start := self.find_from(text, length, 0);
+        return start;
+    }
+
+    /*!
+     * @brief Finds the first match at or after a byte offset.
+     * @param text The subject bytes.
+     * @param length The subject length.
+     * @param offset The starting byte index.
+     * @return The first match, or a sentinel match when none exists.
+     */
+    pub func(self: &Regex) find_from(text: *const u8, length: usize,
+                                     offset: usize) -> Match {
+        let mut start := offset;
+        if (self.anchored_start && start > 0) {
+            return Match(not_found(), not_found());
+        }
+        if (self.anchored_start) {
+            start = 0;
+        }
+        while (start <= length) {
+            let end := match_here(self.pattern, self.length, 0, text, length,
+                                  start);
+            if (end >= 0) {
+                return Match(start, end as usize);
+            }
+            if (self.anchored_start) {
+                break;
+            }
+            start += 1;
+        }
+        return Match(not_found(), not_found());
+    }
+
+    /*!
+     * @brief Replaces the first match in a null-terminated string.
+     * @param text The subject string.
+     * @param replacement The null-terminated replacement text.
+     * @param output The destination buffer.
+     * @param capacity The destination capacity.
+     * @return The number of bytes written.
+     */
+    pub func(self: &Regex) replace_first(text: *const u8,
+                                         replacement: *const u8,
+                                         output: *mut u8,
+                                         capacity: usize) -> usize {
+        let mut text_length := 0;
+        while (text[text_length] != 0) {
+            text_length += 1;
+        }
+        let found := self.find_n(text, text_length);
+        if (found.start == not_found()) {
+            return copy_to(text, 0, text_length, output, capacity);
+        }
+
+        let mut written := copy_to(text, 0, found.start, output, capacity);
+        written += append_cstr(replacement, output + written,
+                              capacity - written);
+        written += copy_to(text, found.end, text_length, output + written,
+                           capacity - written);
+        return written;
+    }
+
+    /*!
+     * @brief Replaces every non-overlapping match in a null-terminated string.
+     * @param text The subject string.
+     * @param replacement The null-terminated replacement text.
+     * @param output The destination buffer.
+     * @param capacity The destination capacity.
+     * @return The number of bytes written.
+     */
+    pub func(self: &Regex) replace_all(text: *const u8,
+                                       replacement: *const u8,
+                                       output: *mut u8,
+                                       capacity: usize) -> usize {
+        let mut text_length := 0;
+        while (text[text_length] != 0) {
+            text_length += 1;
+        }
+
+        let mut input_offset := 0;
+        let mut written := 0;
+        while (input_offset <= text_length) {
+            let found := self.find_from(text, text_length, input_offset);
+            if (found.start == not_found()) {
+                written += copy_to(text, input_offset, text_length,
+                                   output + written, capacity - written);
+                break;
+            }
+            written += copy_to(text, input_offset, found.start,
+                               output + written, capacity - written);
+            written += append_cstr(replacement, output + written,
+                                  capacity - written);
+            if (found.end == found.start) {
+                if (input_offset >= text_length) {
+                    break;
+                }
+                written += copy_to(text, input_offset, input_offset + 1,
+                                   output + written, capacity - written);
+                input_offset += 1;
+            } else {
+                input_offset = found.end;
+            }
+        }
+        return written;
+    }
+}
+
+/*!
+ * @brief Returns the sentinel index used for "not found".
+ * @return The largest `usize` value.
+ */
+pub func not_found() -> usize {
+    return ~(0 as usize);
+}
+
+/*!
+ * @brief Compiles a null-terminated pattern.
+ * @param pattern The pattern text.
+ * @return A compiled regex or a pattern error.
+ */
+pub func compile(pattern: *const u8) -> Result<Regex, RegexError> {
+    return Regex::compile(pattern);
+}
+
+/*!
+ * @brief Tests whether a null-terminated string contains a pattern.
+ * @param pattern The null-terminated pattern.
+ * @param text The null-terminated subject.
+ * @return `true` when the pattern matches.
+ */
+pub func is_match(pattern: *const u8, text: *const u8) -> bool {
+    let compiled := Regex::compile(pattern);
+    return match (compiled) {
+        Result<Regex, RegexError>::Ok(regex) => regex.is_match(text),
+        Result<Regex, RegexError>::Err(_) => false,
+    };
+}
+
+/*!
+ * @brief Escapes regex metacharacters in a null-terminated string.
+ * @param source The literal text.
+ * @param output The destination buffer.
+ * @param capacity The destination capacity.
+ * @return The number of bytes written.
+ */
+pub func escape(source: *const u8, output: *mut u8,
+                capacity: usize) -> usize {
+    let mut written := 0;
+    let mut index := 0;
+    while (source[index] != 0) {
+        let byte := source[index];
+        if (is_meta(byte)) {
+            if (written < capacity) {
+                output[written] = '\\';
+                written += 1;
+            }
+        }
+        if (written < capacity) {
+            output[written] = byte;
+            written += 1;
+        }
+        index += 1;
+    }
+    return written;
+}
+
+func is_meta(byte: u8) -> bool {
+    return byte == '.' || byte == '^' || byte == '$' || byte == '*' ||
+           byte == '+' || byte == '?' || byte == '(' || byte == ')' ||
+           byte == '[' || byte == ']' || byte == '{' || byte == '}' ||
+           byte == '|' || byte == '\\';
+}
+
+func validate_pattern(pattern: *const u8, length: usize) -> Result<void, RegexError> {
+    let mut index := 0;
+    while (index < length) {
+        if (pattern[index] == '\\') {
+            if (index + 1 >= length) {
+                return Result<void, RegexError>::Err(
+                    RegexError::TrailingEscape);
+            }
+            index += 2;
+            continue;
+        }
+        if (pattern[index] == '[') {
+            let close := find_class_end(pattern, length, index);
+            if (close == not_found()) {
+                return Result<void, RegexError>::Err(
+                    RegexError::UnclosedClass);
+            }
+            index = close + 1;
+            continue;
+        }
+        index += 1;
+    }
+    return Result<void, RegexError>::Ok(null);
+}
+
+func find_class_end(pattern: *const u8, length: usize,
+                    start: usize) -> usize {
+    let mut index := start + 1;
+    while (index < length) {
+        if (pattern[index] == '\\') {
+            index += 2;
+            continue;
+        }
+        if (pattern[index] == ']') {
+            return index;
+        }
+        index += 1;
+    }
+    return not_found();
+}
+
+func atom_length(pattern: *const u8, length: usize,
+                 index: usize) -> usize {
+    if (index >= length) {
+        return 0;
+    }
+    if (pattern[index] == '\\') {
+        return 2;
+    }
+    if (pattern[index] == '[') {
+        let close := find_class_end(pattern, length, index);
+        if (close == not_found()) {
+            return 1;
+        }
+        return close - index + 1;
+    }
+    return 1;
+}
+
+func atom_matches(pattern: *const u8, length: usize, index: usize,
+                  text: *const u8, text_length: usize,
+                  position: usize) -> bool {
+    if (position >= text_length) {
+        return false;
+    }
+    let byte := pattern[index];
+    if (byte == '.') {
+        return text[position] != '\n';
+    }
+    if (byte == '\\') {
+        if (index + 1 >= length) {
+            return false;
+        }
+        let escaped := pattern[index + 1];
+        if (escaped == 'd') {
+            return is_digit(text[position]);
+        }
+        if (escaped == 'w') {
+            return is_word(text[position]);
+        }
+        if (escaped == 's') {
+            return is_space(text[position]);
+        }
+        return text[position] == escaped;
+    }
+    if (byte == '[') {
+        return class_matches(pattern, length, index, text[position]);
+    }
+    return text[position] == byte;
+}
+
+func class_matches(pattern: *const u8, length: usize, start: usize,
+                   value: u8) -> bool {
+    let close := find_class_end(pattern, length, start);
+    if (close == not_found()) {
+        return false;
+    }
+
+    let mut index := start + 1;
+    let mut negated := false;
+    if (index < close && pattern[index] == '^') {
+        negated = true;
+        index += 1;
+    }
+
+    let mut matched := false;
+    while (index < close) {
+        let first := pattern[index];
+        if (first == '\\' && index + 1 < close) {
+            let escaped := pattern[index + 1];
+            if ((escaped == 'd' && is_digit(value)) ||
+                (escaped == 'w' && is_word(value)) ||
+                (escaped == 's' && is_space(value)) ||
+                value == escaped) {
+                matched = true;
+            }
+            index += 2;
+            continue;
+        }
+
+        if (index + 2 < close && pattern[index + 1] == '-') {
+            let last := pattern[index + 2];
+            if (first <= value && value <= last) {
+                matched = true;
+            }
+            index += 3;
+            continue;
+        }
+
+        if (first == value) {
+            matched = true;
+        }
+        index += 1;
+    }
+
+    if (negated) {
+        return !matched;
+    }
+    return matched;
+}
+
+func match_here(pattern: *const u8, length: usize, index: usize,
+                text: *const u8, text_length: usize,
+                position: usize) -> i32 {
+    if (index >= length) {
+        return position as i32;
+    }
+
+    let byte := pattern[index];
+    if (byte == '$' && index + 1 == length) {
+        if (position == text_length) {
+            return position as i32;
+        }
+        return -1;
+    }
+    if (byte == '^' && index == 0) {
+        if (position != 0) {
+            return -1;
+        }
+        return match_here(pattern, length, index + 1, text, text_length,
+                          position);
+    }
+
+    let atom_size := atom_length(pattern, length, index);
+    if (atom_size == 0) {
+        return -1;
+    }
+    let next := index + atom_size;
+    let mut quantifier: u8 = 0;
+    if (next < length) {
+        let candidate := pattern[next];
+        if (candidate == '*' || candidate == '+' || candidate == '?') {
+            quantifier = candidate;
+        }
+    }
+
+    if (quantifier == '*') {
+        let mut maximum := 0;
+        while (position + maximum < text_length &&
+               atom_matches(pattern, length, index, text, text_length,
+                            position + maximum)) {
+            maximum += 1;
+        }
+        let mut count := maximum;
+        while (count >= 0) {
+            let result := match_here(pattern, length, next + 1, text,
+                                     text_length, position + count);
+            if (result >= 0) {
+                return result;
+            }
+            if (count == 0) {
+                break;
+            }
+            count -= 1;
+        }
+        return -1;
+    }
+
+    if (quantifier == '+') {
+        let mut maximum := 0;
+        while (position + maximum < text_length &&
+               atom_matches(pattern, length, index, text, text_length,
+                            position + maximum)) {
+            maximum += 1;
+        }
+        let mut count := maximum;
+        while (count >= 1) {
+            let result := match_here(pattern, length, next + 1, text,
+                                     text_length, position + count);
+            if (result >= 0) {
+                return result;
+            }
+            count -= 1;
+        }
+        return -1;
+    }
+
+    if (quantifier == '?') {
+        if (atom_matches(pattern, length, index, text, text_length,
+                         position)) {
+            let result := match_here(pattern, length, next + 1, text,
+                                     text_length, position + 1);
+            if (result >= 0) {
+                return result;
+            }
+        }
+        return match_here(pattern, length, next + 1, text, text_length,
+                          position);
+    }
+
+    if (!atom_matches(pattern, length, index, text, text_length, position)) {
+        return -1;
+    }
+    return match_here(pattern, length, next, text, text_length,
+                      position + 1);
+}
+
+func is_escaped(pattern: *const u8, length: usize, index: usize) -> bool {
+    if (index == 0) {
+        return false;
+    }
+    let mut count := 0;
+    let mut cursor := index;
+    while (cursor > 0 && pattern[cursor - 1] == '\\') {
+        count += 1;
+        cursor -= 1;
+    }
+    return (count & 1) == 1;
+}
+
+func is_digit(value: u8) -> bool {
+    return value >= '0' && value <= '9';
+}
+
+func is_word(value: u8) -> bool {
+    return (value >= 'a' && value <= 'z') ||
+           (value >= 'A' && value <= 'Z') ||
+           (value >= '0' && value <= '9') || value == '_';
+}
+
+func is_space(value: u8) -> bool {
+    return value == ' ' || value == '\t' || value == '\r' ||
+           value == '\n' || value == '\v' || value == '\f';
+}
+
+func copy_to(source: *const u8, start: usize, end: usize,
+             output: *mut u8, capacity: usize) -> usize {
+    let mut written := 0;
+    let mut index := start;
+    while (index < end && written < capacity) {
+        output[written] = source[index];
+        written += 1;
+        index += 1;
+    }
+    return written;
+}
+
+func append_cstr(source: *const u8, output: *mut u8,
+                 capacity: usize) -> usize {
+    if (source == null) {
+        return 0;
+    }
+    let mut written := 0;
+    while (source[written] != 0 && written < capacity) {
+        output[written] = source[written];
+        written += 1;
+    }
+    return written;
+}

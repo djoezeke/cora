@@ -1,1 +1,515 @@
+/*!
+ * @file alloc.cora
+ * @brief Allocator interfaces and the standard allocator implementations.
+ *
+ * Cora allocators are small value objects.  A concrete allocator exposes
+ * `alloc`, `realloc`, and `free` methods and can be used directly for static
+ * dispatch.  Wrapping it in `Allocator` erases the concrete type behind a
+ * context pointer and a vtable for dynamic dispatch.
+ */
 
+/*!
+ * @brief Describes a requested allocation.
+ */
+pub struct Layout {
+    pub size: usize,   //!< Number of bytes requested.
+    pub align: usize,  //!< Required alignment in bytes.
+
+    /*!
+     * @brief Creates a layout from a byte size and alignment.
+     * @param size Number of bytes.
+     * @param align A non-zero power-of-two alignment.
+     * @return The new layout.
+     */
+    pub func Layout(size: usize, align: usize) -> Layout {
+        return Layout { size: size, align: align };
+    }
+
+    /*!
+     * @brief Creates a layout for one value of a type.
+     * @tparam T The value type.
+     * @return A layout with the size and alignment of `T`.
+     */
+    pub func of<T>() -> Layout {
+        return Layout { size: sizeof(T), align: alignof(T) };
+    }
+
+    /*!
+     * @brief Creates a layout for an array of values.
+     * @tparam T The element type.
+     * @param count The number of elements.
+     * @return A layout covering `count` values of `T`.
+     */
+    pub func array<T>(count: usize) -> Layout {
+        return Layout {
+            size: sizeof(T) * count,
+            align: alignof(T),
+        };
+    }
+
+    /*!
+     * @brief Tests whether this layout can be satisfied.
+     * @return `true` for a non-zero size and power-of-two alignment.
+     */
+    pub func(self: &Layout) is_valid() -> bool {
+        return self.size > 0 && self.align > 0 &&
+               (self.align & (self.align - 1)) == 0;
+    }
+}
+
+/*!
+ * @brief Reasons an allocation request may fail.
+ */
+pub enum AllocError {
+    OutOfMemory,      //!< The backing allocator has no space left.
+    InvalidLayout,    //!< The size or alignment is invalid.
+    Unsupported,      //!< The allocator cannot perform this operation.
+    Sealed,           //!< The allocator has been sealed and rejects requests.
+}
+
+/*!
+ * @brief A dynamically dispatched memory allocator.
+ *
+ * The `Allocator` value contains a pointer to the allocator state and a pointer
+ * to its vtable.  It is copyable and does not own the state it refers to.
+ */
+pub struct Allocator {
+    /*!
+     * @brief Operations implemented by every dynamic allocator.
+     */
+    pub struct VTable {
+        pub alloc: *const func(ctx: *mut void, size: usize,
+                               align: usize) -> *mut u8,
+        pub realloc: *const func(ctx: *mut void, ptr: *mut u8,
+                                 old_size: usize, new_size: usize,
+                                 align: usize) -> *mut u8,
+        pub free: *const func(ctx: *mut void, ptr: *mut u8,
+                              size: usize, align: usize) -> void,
+    };
+
+    ctx: *mut void,
+    vtable: *const VTable,
+
+    /*!
+     * @brief Creates an allocator from a state pointer and a vtable.
+     * @param ctx The allocator state.
+     * @param vtable The operations for the state.
+     * @return A dynamically dispatched allocator.
+     */
+    pub func Allocator(ctx: *mut void, vtable: *const VTable) -> Allocator {
+        return Allocator { ctx: ctx, vtable: vtable };
+    }
+
+    /*!
+     * @brief Returns `true` when the allocator has no vtable.
+     * @return Whether this is a null allocator.
+     */
+    pub func(self: &Allocator) is_null() -> bool {
+        return self.vtable == null;
+    }
+
+    /*!
+     * @brief Allocates a block of memory.
+     * @param size Number of bytes to allocate.
+     * @param align Required alignment in bytes.
+     * @return A pointer to the new block, or `null` on failure.
+     */
+    pub func(self: &Allocator) alloc(size: usize, align: usize) -> *mut u8 {
+        if (self.is_null() || size == 0) {
+            return null;
+        }
+        return self.vtable.alloc(self.ctx, size, align);
+    }
+
+    /*!
+     * @brief Resizes an existing allocation.
+     * @param ptr The existing block, or `null` to allocate a new block.
+     * @param old_size The previous size in bytes.
+     * @param new_size The requested size in bytes.
+     * @param align The alignment of the block.
+     * @return The resized block, or `null` on failure.
+     */
+    pub func(self: &Allocator) realloc(ptr: *mut u8, old_size: usize,
+                                       new_size: usize,
+                                       align: usize) -> *mut u8 {
+        if (self.is_null()) {
+            return null;
+        }
+        if (ptr == null) {
+            return self.alloc(new_size, align);
+        }
+        if (new_size == 0) {
+            self.free(ptr, old_size, align);
+            return null;
+        }
+        return self.vtable.realloc(self.ctx, ptr, old_size, new_size, align);
+    }
+
+    /*!
+     * @brief Releases a block of memory.
+     * @param ptr The block to release.
+     * @param size The block size in bytes.
+     * @param align The block alignment in bytes.
+     */
+    pub func(self: &Allocator) free(ptr: *mut u8, size: usize,
+                                    align: usize) -> void {
+        if (self.is_null() || ptr == null) {
+            return;
+        }
+        self.vtable.free(self.ctx, ptr, size, align);
+    }
+
+    /*!
+     * @brief Allocates storage for `count` values of `T`.
+     * @tparam T The element type.
+     * @param count The number of elements.
+     * @return A typed pointer, or `null` on failure.
+     */
+    pub func(self: &Allocator) alloc_array<T>(count: usize) -> *mut T {
+        let layout := Layout::array<T>(count);
+        return self.alloc(layout.size, layout.align) as *mut T;
+    }
+
+    /*!
+     * @brief Releases storage returned by `alloc_array<T>`.
+     * @tparam T The element type.
+     * @param pointer The block to release.
+     * @param count The number of elements in the block.
+     */
+    pub func(self: &Allocator) free_array<T>(pointer: *mut T,
+                                             count: usize) -> void {
+        let layout := Layout::array<T>(count);
+        self.free(pointer as *mut u8, layout.size, layout.align);
+    }
+}
+
+/*!
+ * @brief Returns the null allocator used when no allocation is possible.
+ * @return An allocator whose operations fail safely.
+ */
+pub func null_allocator() -> Allocator {
+    return Allocator(null, null);
+}
+
+/*!
+ * @brief An allocator backed by the platform C heap.
+ *
+ * `GlobalAllocator` is a zero-sized value.  It is the default allocator for
+ * hosted programs and the recommended backing allocator for decorators such as
+ * `FixedBufferAllocator`.
+ */
+pub struct GlobalAllocator {
+    /*!
+     * @brief Creates a global allocator value.
+     * @return A zero-sized global allocator.
+     */
+    pub func GlobalAllocator() -> GlobalAllocator {
+        return GlobalAllocator {};
+    }
+
+    /*!
+     * @brief Allocates memory from the C heap.
+     * @param size Number of bytes.
+     * @param align Required alignment.
+     * @return A pointer to the block, or `null` on failure.
+     */
+    pub func(self: &GlobalAllocator) alloc(size: usize,
+                                           align: usize) -> *mut u8 {
+        if (size == 0) {
+            return null;
+        }
+        // malloc is suitably aligned for every fundamental type.  For larger
+        // alignments the request is over-allocated and the caller receives an
+        // adjusted pointer from a small header.
+        if (align <= alignof(usize)) {
+            return c_malloc(size);
+        }
+
+        let total := size + align + sizeof(usize);
+        let raw := c_malloc(total);
+        if (raw == null) {
+            return null;
+        }
+        let address := (raw as usize) + sizeof(usize);
+        let aligned := (address + align - 1) & ~(align - 1);
+        let header := (aligned - sizeof(usize)) as *mut usize;
+        header[0] = raw as usize;
+        return aligned as *mut u8;
+    }
+
+    /*!
+     * @brief Resizes a C-heap allocation.
+     * @param ptr The existing block, or `null`.
+     * @param old_size The previous block size.
+     * @param new_size The requested size.
+     * @param align The block alignment.
+     * @return The resized block, or `null` on failure.
+     */
+    pub func(self: &GlobalAllocator) realloc(ptr: *mut u8, old_size: usize,
+                                             new_size: usize,
+                                             align: usize) -> *mut u8 {
+        if (ptr == null) {
+            return self.alloc(new_size, align);
+        }
+        if (new_size == 0) {
+            self.free(ptr, old_size, align);
+            return null;
+        }
+        if (align <= alignof(usize)) {
+            return c_realloc(ptr, new_size);
+        }
+
+        let replacement := self.alloc(new_size, align);
+        if (replacement == null) {
+            return null;
+        }
+        let count := if (old_size < new_size) { old_size } else { new_size };
+        let mut index := 0;
+        while (index < count) {
+            replacement[index] = ptr[index];
+            index += 1;
+        }
+        self.free(ptr, old_size, align);
+        return replacement;
+    }
+
+    /*!
+     * @brief Releases a C-heap allocation.
+     * @param ptr The block to release.
+     * @param size The block size.
+     * @param align The block alignment.
+     */
+    pub func(self: &GlobalAllocator) free(ptr: *mut u8, size: usize,
+                                          align: usize) -> void {
+        if (ptr == null) {
+            return;
+        }
+        if (align <= alignof(usize)) {
+            c_free(ptr);
+            return;
+        }
+        let header := ((ptr as usize) - sizeof(usize)) as *mut usize;
+        c_free(header[0] as *mut u8);
+    }
+
+    /*!
+     * @brief Erases this allocator into the dynamic `Allocator` interface.
+     * @return A dynamic allocator that dispatches to `GlobalAllocator`.
+     */
+    pub func(self: *GlobalAllocator) allocator() -> Allocator {
+        return Allocator(self as *mut void,
+                         &GLOBAL_VTABLE as *const Allocator::VTable);
+    }
+}
+
+//! Conventional short name for the general-purpose allocator.
+pub using GPAllocator = GlobalAllocator;
+
+/*!
+ * @brief A bump allocator over a caller-provided byte buffer.
+ *
+ * Individual frees are ignored.  `reset` releases every allocation at once,
+ * which makes this allocator suitable for phases, parsers, and frame-local
+ * scratch storage.
+ */
+pub struct FixedBufferAllocator {
+    buffer: *mut u8,
+    capacity: usize,
+    offset: usize,
+    peak: usize,
+
+    /*!
+     * @brief Creates a bump allocator over a byte buffer.
+     * @param buffer The buffer to hand out.
+     * @param capacity The buffer size in bytes.
+     * @return A new fixed-buffer allocator.
+     */
+    pub func FixedBufferAllocator(buffer: *mut u8,
+                                  capacity: usize) -> FixedBufferAllocator {
+        return FixedBufferAllocator {
+            buffer: buffer,
+            capacity: capacity,
+            offset: 0,
+            peak: 0,
+        };
+    }
+
+    /*!
+     * @brief Allocates the next aligned slice of the buffer.
+     * @param size Number of bytes.
+     * @param align Required alignment.
+     * @return A pointer into the buffer, or `null` when exhausted.
+     */
+    pub func(self: &mut FixedBufferAllocator) alloc(size: usize,
+                                                    align: usize) -> *mut u8 {
+        if (size == 0 || align == 0 || self.buffer == null) {
+            return null;
+        }
+        let base := (self.buffer as usize) + self.offset;
+        let aligned := (base + align - 1) & ~(align - 1);
+        let end := aligned + size;
+        let limit := (self.buffer as usize) + self.capacity;
+        if (end > limit) {
+            return null;
+        }
+        self.offset = end - (self.buffer as usize);
+        if (self.offset > self.peak) {
+            self.peak = self.offset;
+        }
+        return aligned as *mut u8;
+    }
+
+    /*!
+     * @brief Shrinks an allocation when it is the most recent one.
+     * @param ptr The block to resize.
+     * @param old_size The current size.
+     * @param new_size The requested size.
+     * @param align The block alignment.
+     * @return `ptr` on success, otherwise `null`.
+     */
+    pub func(self: &mut FixedBufferAllocator) realloc(ptr: *mut u8,
+                                                      old_size: usize,
+                                                      new_size: usize,
+                                                      align: usize) -> *mut u8 {
+        if (ptr == null) {
+            return self.alloc(new_size, align);
+        }
+        if (new_size == 0) {
+            return null;
+        }
+        let end := (ptr as usize) + old_size;
+        let buffer_end := (self.buffer as usize) + self.offset;
+        if (end != buffer_end || new_size > old_size) {
+            return null;
+        }
+        self.offset -= old_size - new_size;
+        return ptr;
+    }
+
+    /*!
+     * @brief Ignores a free request.
+     * @param ptr The block to release.
+     * @param size The block size.
+     * @param align The block alignment.
+     */
+    pub func(self: &mut FixedBufferAllocator) free(ptr: *mut u8,
+                                                   size: usize,
+                                                   align: usize) -> void {
+        // Bump allocation cannot reclaim individual blocks.
+    }
+
+    /*!
+     * @brief Releases every allocation and starts from the beginning.
+     */
+    pub func(self: &mut FixedBufferAllocator) reset() -> void {
+        self.offset = 0;
+    }
+
+    /*!
+     * @brief Returns the number of bytes currently allocated.
+     * @return The current bump offset.
+     */
+    pub func(self: &FixedBufferAllocator) used() -> usize {
+        return self.offset;
+    }
+
+    /*!
+     * @brief Returns the number of bytes still available.
+     * @return Remaining capacity in bytes.
+     */
+    pub func(self: &FixedBufferAllocator) remaining() -> usize {
+        return self.capacity - self.offset;
+    }
+
+    /*!
+     * @brief Returns the high-water mark of allocated bytes.
+     * @return The largest offset observed since construction.
+     */
+    pub func(self: &FixedBufferAllocator) peak_used() -> usize {
+        return self.peak;
+    }
+
+    /*!
+     * @brief Erases this allocator into the dynamic `Allocator` interface.
+     * @return A dynamic allocator that dispatches to this buffer.
+     */
+    pub func(self: *FixedBufferAllocator) allocator() -> Allocator {
+        return Allocator(self as *mut void,
+                         &FIXED_VTABLE as *const Allocator::VTable);
+    }
+}
+
+const GLOBAL_VTABLE: Allocator::VTable = Allocator::VTable {
+    alloc: global_alloc,
+    realloc: global_realloc,
+    free: global_free,
+};
+
+const FIXED_VTABLE: Allocator::VTable = Allocator::VTable {
+    alloc: fixed_alloc,
+    realloc: fixed_realloc,
+    free: fixed_free,
+};
+
+func global_alloc(ctx: *mut void, size: usize, align: usize) -> *mut u8 {
+    let allocator := GlobalAllocator();
+    return allocator.alloc(size, align);
+}
+
+func global_realloc(ctx: *mut void, ptr: *mut u8, old_size: usize,
+                    new_size: usize, align: usize) -> *mut u8 {
+    let allocator := GlobalAllocator();
+    return allocator.realloc(ptr, old_size, new_size, align);
+}
+
+func global_free(ctx: *mut void, ptr: *mut u8, size: usize,
+                 align: usize) -> void {
+    let allocator := GlobalAllocator();
+    allocator.free(ptr, size, align);
+}
+
+func fixed_alloc(ctx: *mut void, size: usize, align: usize) -> *mut u8 {
+    let allocator := ctx as *mut FixedBufferAllocator;
+    return allocator.alloc(size, align);
+}
+
+func fixed_realloc(ctx: *mut void, ptr: *mut u8, old_size: usize,
+                   new_size: usize, align: usize) -> *mut u8 {
+    let allocator := ctx as *mut FixedBufferAllocator;
+    return allocator.realloc(ptr, old_size, new_size, align);
+}
+
+func fixed_free(ctx: *mut void, ptr: *mut u8, size: usize,
+                align: usize) -> void {
+    let allocator := ctx as *mut FixedBufferAllocator;
+    allocator.free(ptr, size, align);
+}
+
+/*!
+ * @brief Allocates a single value from the global allocator.
+ * @tparam T The value type.
+ * @return A pointer to uninitialized storage, or `null` on failure.
+ */
+pub func allocate<T>() -> *mut T {
+    let allocator := GlobalAllocator();
+    return allocator.alloc(sizeof(T), alignof(T)) as *mut T;
+}
+
+/*!
+ * @brief Releases a single value allocated by `allocate<T>`.
+ * @tparam T The value type.
+ * @param pointer The allocation to release.
+ */
+pub func deallocate<T>(pointer: *mut T) -> void {
+    let allocator := GlobalAllocator();
+    allocator.free(pointer as *mut u8, sizeof(T), alignof(T));
+}
+
+[[link_name("malloc")]]
+extern "C" func c_malloc(size: usize) -> *mut u8;
+
+[[link_name("realloc")]]
+extern "C" func c_realloc(ptr: *mut u8, size: usize) -> *mut u8;
+
+[[link_name("free")]]
+extern "C" func c_free(ptr: *mut u8) -> void;
