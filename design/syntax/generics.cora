@@ -1,0 +1,130 @@
+// =========================================================================
+// 1.  Function Templates
+// =========================================================================
+// Allows a single function to operate on different data types.
+
+func add<T>(a: T, b: T) -> T {
+    return a + b;
+}
+
+// Multiple template parameters & trailing return type
+func multiply<T, U>(a: T, b: T) -> decltype(a * b) {
+    return a * b;
+}
+
+func main() -> void {
+    std::cout << add(3, 4) << '\n';            // Type deduced as int
+    std::cout << add<double>(3.5, 2.1) << '\n'; // Explicit type argument
+    std::cout << multiply<int, double>(3, 2.1) << '\n'; // Explicit type argument
+    std::cout << multiply(3, 2.5) << '\n';      // Deduces T=int, U=double
+}
+
+// =========================================================================
+// 1.  Struct Templates
+// =========================================================================
+// Allows structures to hold or manage generic data types.
+
+#include <iostream>
+
+// U has a default type
+struct Pair<T, U: u32> {
+    first: T,
+    second: U,
+
+    pub func Pair(f: T, s: U) -> Pair<T, U> {
+        return {
+            first: f,
+            second: s,
+        }
+    }
+
+    pub const func(p: *Pair<T, U>) GenMemFunc<S>(a: S) -> S { ... }
+
+    pub const func(p: *Pair<T, U>) getFirst() -> T { return p->first; }
+    pub const func(p: *Pair<T, U>) getSecond() -> U { return p->second; }
+};
+
+// Out-of-line member function definition
+pub const func(p: *Pair<T, U>) Pair<T, U>::print() -> void {
+    std::cout << p->first << ", " << p->second << '\n';
+}
+
+func main() -> void {
+    Pair<std::string, double> p1("Pi", 3.14);
+    Pair p2("Count", 10); // CTAD (Class Template Argument Deduction - C++17)
+    p2.print();
+}
+
+// =========================================================================
+// 3. Non-Type Template Parameters (NTTP)
+// =========================================================================
+// Allows passing values (not just types) as template parameters.
+// Allows compile-time constants(pointer, literal struct types, etc.) to be used in templates.
+
+struct FixedBuffer<T, S: usize> {
+    data: T[S],
+
+    pub const constexpr func capacity() -> usize { return S; }
+};
+
+func main() -> void {
+    FixedBuffer<u32, 64> buf; // '64' is baked into the type at compile time
+}
+
+// =========================================================================
+// 4. Variable & Alias Templates
+// =========================================================================
+
+using pi<T> = T(3.1415926535897932385L);
+using IntMap<T> = std::vector<std::pair<u32, T>>;
+
+func main() -> void {
+    double r = 2.0;
+    double area = pi<double> * r * r;
+    IntMap<std::string> myMap;
+}
+
+// =========================================================================
+// 5. Template Specialization
+// =========================================================================
+// Customizes behavior for specific types when the generic implementation isn't optimal.
+
+#include <iostream>
+
+// 1. Primary Template
+struct Storage<T, U> {
+    static func info() -> void { std::cout << "Generic Storage\n"; }
+};
+
+// 2. Partial Specialization (only valid for structs, not functions)
+struct Storage<T: T*, S: u32> {
+    static func info() -> void { std::cout << "Pointer + U32 Storage\n"; }
+};
+
+// 3. Full (Explicit) Specialization
+struct Storage<C1: u8, c2: u8> {
+    static func info() -> void { std::cout << "Char-Char Specialized Storage\n"; }
+};
+
+// =========================================================================
+// 6. Constraints & Concepts 
+// =========================================================================
+
+// Defining a custom Concept
+
+using Numeric<T> = std::integral<T> || std::floating_point<T>;
+
+// Constrained template parameter
+func square<T: Numeric>(x: T) -> T { return x * x; }
+
+// =========================================================================
+// 7. Generic Lambdas 
+// =========================================================================
+
+func main() -> void {
+
+    // Generic lambda
+    const add := []<T>(a: T, b: T) -> T {
+        return a + b;
+    };
+}
