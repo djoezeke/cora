@@ -1,0 +1,402 @@
+/*!
+ * @file keys.cora
+ * @brief Secret-key containers and key-derivation helpers.
+ *
+ * The module intentionally separates key *storage* from key *agreement* and
+ * *signature* algorithms.  A `Key` is a bounded byte container with
+ * constant-time comparison and explicit wiping; protocols can use it for
+ * symmetric keys, seeds, or encoded public values.  HKDF-SHA-256 is provided
+ * as the standard way to derive independent subkeys.
+ */
+
+import "core::type";
+import "cora::crypto::hash";
+import "cora::crypto::rand";
+
+/*!
+ * @brief The largest key accepted by the built-in containers.
+ */
+pub comptime const key_capacity: usize = 64;
+
+/*!
+ * @brief Reasons a key operation may fail.
+ */
+pub enum KeyError {
+    InvalidLength,   //!< The key is empty or larger than `key_capacity`.
+    EntropyFailure,  //!< The platform entropy source failed.
+    DerivationFailed,//!< The requested derived key is too long.
+    NotFound,        //!< No matching key exists in the ring.
+}
+
+/*!
+ * @brief The intended use of a key.
+ */
+pub enum KeyKind {
+    Symmetric,    //!< A key for a stream or block cipher.
+    Authentication,//!< A key for a message authentication code.
+    Signing,      //!< A private signing key.
+    Verification, //!< A public verification key.
+    Exchange,     //!< A key-agreement key.
+}
+
+/*!
+ * @brief A bounded, copyable key container.
+ */
+pub struct Key {
+    bytes: u8[key_capacity],
+    length: usize,
+    kind: KeyKind,
+
+    /*!
+     * @brief Creates an empty symmetric key.
+     * @return A zero-length key.
+     */
+    pub func Key() -> Key {
+        return Key {
+            bytes: [0; key_capacity],
+            length: 0,
+            kind: KeyKind::Symmetric,
+        };
+    }
+
+    /*!
+     * @brief Copies a key from a byte range.
+     * @param source The key bytes.
+     * @param count The key length, at most `key_capacity`.
+     * @return The new key, or an empty key when the length is invalid.
+     */
+    pub func from_bytes(source: *const u8, count: usize) -> Key {
+        let mut key := Key();
+        if (count == 0 || count > key_capacity) {
+            return key;
+        }
+        let mut index := 0;
+        while (index < count) {
+            key.bytes[index] = source[index];
+            index += 1;
+        }
+        key.length = count;
+        return key;
+    }
+
+    /*!
+     * @brief Copies a key and assigns its intended use.
+     * @param source The key bytes.
+     * @param count The key length.
+     * @param kind The intended use.
+     * @return The new key.
+     */
+    pub func with_kind(source: *const u8, count: usize,
+                       kind: KeyKind) -> Key {
+        let mut key := Key::from_bytes(source, count);
+        key.kind = kind;
+        return key;
+    }
+
+    /*!
+     * @brief Returns the key length.
+     * @return The number of meaningful bytes.
+     */
+    pub func(self: &Key) len() -> usize {
+        return self.length;
+    }
+
+    /*!
+     * @brief Returns `true` when the key contains no bytes.
+     * @return Whether the length is zero.
+     */
+    pub func(self: &Key) is_empty() -> bool {
+        return self.length == 0;
+    }
+
+    /*!
+     * @brief Returns the intended use of the key.
+     * @return The key kind.
+     */
+    pub func(self: &Key) kind() -> KeyKind {
+        return self.kind;
+    }
+
+    /*!
+     * @brief Returns a read-only pointer to the key bytes.
+     * @return The first key byte.
+     */
+    pub func(self: &Key) bytes() -> *const u8 {
+        return &self.bytes[0] as *const u8;
+    }
+
+    /*!
+     * @brief Copies the key into caller storage.
+     * @param destination The destination buffer.
+     * @param capacity The destination capacity.
+     * @return The number of bytes copied.
+     */
+    pub func(self: &Key) copy_to(destination: *mut u8,
+                                 capacity: usize) -> usize {
+        let limit := if (self.length < capacity) { self.length } else {
+            capacity
+        };
+        let mut index := 0;
+        while (index < limit) {
+            destination[index] = self.bytes[index];
+            index += 1;
+        }
+        return limit;
+    }
+
+    /*!
+     * @brief Compares two keys without leaking their contents through timing.
+     * @param other The key to compare against.
+     * @return `true` when the lengths and contents match.
+     */
+    pub func(self: &Key) equals(other: Key) -> bool {
+        if (self.length != other.length) {
+            return false;
+        }
+        return constant_time_eq(self.bytes(), other.bytes(), self.length);
+    }
+
+    /*!
+     * @brief Overwrites the key with zeroes and clears its length.
+     */
+    pub func(self: &mut Key) wipe() -> void {
+        let mut index := 0;
+        while (index < key_capacity) {
+            self.bytes[index] = 0;
+            index += 1;
+        }
+        self.length = 0;
+    }
+}
+
+//! A key used for symmetric encryption or authentication.
+pub using SecretKey = Key;
+
+//! A key containing a public verification or exchange value.
+pub using PublicKey = Key;
+
+/*!
+ * @brief A secret key paired with its corresponding public key.
+ */
+pub struct KeyPair {
+    secret: SecretKey,
+    public: PublicKey,
+
+    /*!
+     * @brief Creates a key pair from two key values.
+     * @param secret The private component.
+     * @param public The public component.
+     * @return The key pair.
+     */
+    pub func KeyPair(secret: SecretKey,
+                     public: PublicKey) -> KeyPair {
+        return KeyPair { secret: secret, public: public };
+    }
+
+    /*!
+     * @brief Returns the private component.
+     * @return The secret key.
+     */
+    pub func(self: &KeyPair) secret() -> SecretKey {
+        return self.secret;
+    }
+
+    /*!
+     * @brief Returns the public component.
+     * @return The public key.
+     */
+    pub func(self: &KeyPair) public() -> PublicKey {
+        return self.public;
+    }
+
+    /*!
+     * @brief Wipes the private component and clears the pair.
+     */
+    pub func(self: &mut KeyPair) wipe() -> void {
+        self.secret.wipe();
+        self.public.wipe();
+    }
+}
+
+/*!
+ * @brief A fixed-capacity collection of keys owned by the caller.
+ */
+pub struct KeyRing {
+    keys: *mut Key,
+    capacity: usize,
+    count: usize,
+
+    /*!
+     * @brief Creates an empty ring over caller-provided storage.
+     * @param keys The key array.
+     * @param capacity The number of array entries.
+     * @return An empty key ring.
+     */
+    pub func KeyRing(keys: *mut Key, capacity: usize) -> KeyRing {
+        return KeyRing { keys: keys, capacity: capacity, count: 0 };
+    }
+
+    /*!
+     * @brief Returns the number of keys in the ring.
+     * @return The current key count.
+     */
+    pub func(self: &KeyRing) count() -> usize {
+        return self.count;
+    }
+
+    /*!
+     * @brief Returns the ring capacity.
+     * @return The maximum number of keys.
+     */
+    pub func(self: &KeyRing) capacity() -> usize {
+        return self.capacity;
+    }
+
+    /*!
+     * @brief Adds a key to the ring.
+     * @param key The key to add.
+     * @return `true` on success.
+     */
+    pub func(self: &mut KeyRing) add(key: Key) -> bool {
+        if (self.count >= self.capacity) {
+            return false;
+        }
+        self.keys[self.count] = key;
+        self.count += 1;
+        return true;
+    }
+
+    /*!
+     * @brief Returns a key by index.
+     * @param index The key index.
+     * @return A pointer to the key, or `null` when out of range.
+     */
+    pub func(self: &KeyRing) get(index: usize) -> *const Key {
+        if (index >= self.count) {
+            return null;
+        }
+        return &self.keys[index] as *const Key;
+    }
+
+    /*!
+     * @brief Finds the first key with a given intended use.
+     * @param kind The key kind to search for.
+     * @return The key index, or `Option::None`.
+     */
+    pub func(self: &KeyRing) find_kind(kind: KeyKind) -> Option<usize> {
+        let mut index := 0;
+        while (index < self.count) {
+            if (self.keys[index].kind() == kind) {
+                return Option<usize>::Some(index);
+            }
+            index += 1;
+        }
+        return Option<usize>::None;
+    }
+
+    /*!
+     * @brief Wipes and removes every key in the ring.
+     */
+    pub func(self: &mut KeyRing) clear() -> void {
+        let mut index := 0;
+        while (index < self.count) {
+            self.keys[index].wipe();
+            index += 1;
+        }
+        self.count = 0;
+    }
+}
+
+/*!
+ * @brief Derives one or more keys with HKDF-SHA-256.
+ * @param secret The input keying material.
+ * @param salt Optional HKDF salt bytes.
+ * @param salt_length The salt length.
+ * @param info Optional context/domain separator bytes.
+ * @param info_length The context length.
+ * @param output The output buffer.
+ * @param output_length The number of derived bytes, at most `255 * 32`.
+ * @return The number of bytes written, or an error.
+ */
+pub func derive_key(secret: &Key, salt: *const u8, salt_length: usize,
+                    info: *const u8, info_length: usize, output: *mut u8,
+                    output_length: usize) -> Result<usize, KeyError> {
+    if (secret.is_empty()) {
+        return Result<usize, KeyError>::Err(KeyError::InvalidLength);
+    }
+    if (output_length > 255 * 32) {
+        return Result<usize, KeyError>::Err(
+            KeyError::InvalidLength);
+    }
+
+    let mut extractor := HmacSha256(salt, salt_length);
+    extractor.update(secret.bytes(), secret.len());
+    let pseudorandom_key := extractor.finish();
+
+    let mut previous: u8[32] = [0; 32];
+    let mut previous_length := 0;
+    let mut written := 0;
+    let mut counter: u8 = 1;
+    while (written < output_length) {
+        let mut expander := HmacSha256(pseudorandom_key.bytes(),
+                                       pseudorandom_key.len());
+        if (previous_length > 0) {
+            expander.update(&previous[0] as *const u8, previous_length);
+        }
+        if (info_length > 0) {
+            expander.update(info, info_length);
+        }
+        expander.update(&counter as *const u8, 1);
+        let block := expander.finish();
+        block.copy_to(&mut previous[0] as *mut u8, 32);
+        previous_length = 32;
+
+        let remaining := output_length - written;
+        let take := if (remaining < 32) { remaining } else { 32 };
+        block.copy_to(output + written, take);
+        written += take;
+        counter += 1;
+    }
+    return Result<usize, KeyError>::Ok(written);
+}
+
+/*!
+ * @brief Derives a labelled subkey with HKDF-SHA-256.
+ * @param secret The input keying material.
+ * @param label The domain-separation label.
+ * @param label_length The label length.
+ * @param output The output buffer.
+ * @param output_length The number of derived bytes.
+ * @return The number of bytes written, or an error.
+ */
+pub func derive_subkey(secret: &Key, label: *const u8, label_length: usize,
+                       output: *mut u8,
+                       output_length: usize) -> Result<usize, KeyError> {
+    return derive_key(secret, null, 0, label, label_length, output,
+                      output_length);
+}
+
+/*!
+ * @brief Generates a key from the platform entropy source.
+ * @param kind The intended use of the key.
+ * @param length The key length in bytes, at most `key_capacity`.
+ * @param output The destination key.
+ * @return The generated key, or an error.
+ */
+pub func generate_key(kind: KeyKind, length: usize,
+                      output: *mut Key) -> Result<void, KeyError> {
+    if (length == 0 || length > key_capacity) {
+        return Result<void, KeyError>::Err(KeyError::InvalidLength);
+    }
+    let mut bytes: u8[key_capacity] = [0; key_capacity];
+    let result := entropy_fill(&mut bytes[0] as *mut u8, length);
+    return match (result) {
+        Result<usize, EntropyError>::Ok(_) => {
+            *output = Key::with_kind(&bytes[0] as *const u8, length, kind);
+            Result<void, KeyError>::Ok(null)
+        },
+        Result<usize, EntropyError>::Err(_) => {
+            Result<void, KeyError>::Err(KeyError::EntropyFailure)
+        },
+    };
+}

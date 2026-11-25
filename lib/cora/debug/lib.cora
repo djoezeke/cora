@@ -1,0 +1,15 @@
+/*!
+ * @file lib.cora
+ * @brief Hosted debugging, logging, and process-lifecycle entry point.
+ *
+ * This module layers formatted printing, structured logging, exception values,
+ * stack traces, and execution control on top of the freestanding facilities in
+ * `core::debug`.
+ */
+
+import "core::debug::lib";
+import "cora::debug::print";
+import "cora::debug::logging";
+import "cora::debug::exception";
+import "cora::debug::execution";
+import "cora::debug::stacktrace";

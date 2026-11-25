@@ -1,0 +1,372 @@
+/*!
+ * @file logging.cora
+ * @brief Severity-based logging for hosted programs.
+ *
+ * `Logger` objects are lightweight values with an optional sink callback.  The
+ * free functions use the process-wide level maintained by the runtime and
+ * write to standard error, which makes them usable from libraries that do not
+ * want to own logger state.
+ */
+
+import "cora::debug::print";
+import "cora::text::format";
+
+/*!
+ * @brief Severity of a log record.
+ */
+pub enum LogLevel : u8 {
+    Trace = 0,  //!< Fine-grained diagnostic events.
+    Debug = 1,  //!< Development diagnostics.
+    Info = 2,   //!< Normal operational messages.
+    Warn = 3,   //!< Recoverable abnormal conditions.
+    Error = 4,  //!< Failed operations.
+    Fatal = 5,  //!< Unrecoverable failures.
+    Off = 6,    //!< Disables all logging.
+}
+
+/*!
+ * @brief One structured logging event.
+ */
+pub struct LogRecord {
+    pub level: LogLevel,     //!< Severity of the event.
+    pub timestamp: u64,      //!< Monotonic timestamp in nanoseconds.
+    pub file: *const u8,     //!< Null-terminated source file name.
+    pub line: u32,           //!< One-based source line.
+    pub message: *const u8,  //!< Null-terminated message text.
+
+    /*!
+     * @brief Creates a log record.
+     * @param level The event severity.
+     * @param timestamp The monotonic timestamp.
+     * @param file The source file name.
+     * @param line The source line.
+     * @param message The message text.
+     * @return The populated record.
+     */
+    pub func LogRecord(level: LogLevel, timestamp: u64, file: *const u8,
+                       line: u32, message: *const u8) -> LogRecord {
+        return LogRecord {
+            level: level,
+            timestamp: timestamp,
+            file: file,
+            line: line,
+            message: message,
+        };
+    }
+}
+
+/*!
+ * @brief A callback that consumes a log record.
+ */
+pub using LogSink = func(record: *const LogRecord) -> void;
+
+/*!
+ * @brief A logger with a minimum severity and an optional sink.
+ */
+pub struct Logger {
+    minimum: LogLevel,
+    sink: *const LogSink,
+    context: *mut void,
+
+    /*!
+     * @brief Creates a logger.
+     * @param minimum The lowest severity that is emitted.
+     * @param sink An optional sink callback.
+     * @param context Optional state passed to the sink.
+     * @return The logger.
+     */
+    pub func Logger(minimum: LogLevel, sink: *const LogSink,
+                    context: *mut void) -> Logger {
+        return Logger {
+            minimum: minimum,
+            sink: sink,
+            context: context,
+        };
+    }
+
+    /*!
+     * @brief Creates a logger that writes records to standard error.
+     * @param minimum The lowest emitted severity.
+     * @return A console logger.
+     */
+    pub func console(minimum: LogLevel) -> Logger {
+        return Logger {
+            minimum: minimum,
+            sink: null,
+            context: null,
+        };
+    }
+
+    /*!
+     * @brief Returns the minimum emitted severity.
+     * @return The configured level.
+     */
+    pub func(self: &Logger) level() -> LogLevel {
+        return self.minimum;
+    }
+
+    /*!
+     * @brief Changes the minimum emitted severity.
+     * @param level The new level.
+     */
+    pub func(self: &mut Logger) set_level(level: LogLevel) -> void {
+        self.minimum = level;
+    }
+
+    /*!
+     * @brief Tests whether a severity would be emitted.
+     * @param level The severity to test.
+     * @return `true` when the logger accepts the severity.
+     */
+    pub func(self: &Logger) enabled(level: LogLevel) -> bool {
+        if (self.minimum == LogLevel::Off) {
+            return false;
+        }
+        return (level as u8) >= (self.minimum as u8);
+    }
+
+    /*!
+     * @brief Emits a record when its severity is enabled.
+     * @param record The record to emit.
+     * @return `true` when the record was emitted.
+     */
+    pub func(self: &Logger) record(record: *const LogRecord) -> bool {
+        if (!self.enabled(record.level)) {
+            return false;
+        }
+        if (self.sink != null) {
+            self.sink(record);
+            return true;
+        }
+        console_write(record);
+        return true;
+    }
+
+    /*!
+     * @brief Emits a trace message.
+     * @param message The message text.
+     * @param file The source file name.
+     * @param line The source line.
+     * @return `true` when the message was emitted.
+     */
+    pub func(self: &Logger) trace(message: *const u8, file: *const u8,
+                                  line: u32) -> bool {
+        return self.emit(LogLevel::Trace, message, file, line);
+    }
+
+    /*!
+     * @brief Emits a debug message.
+     * @param message The message text.
+     * @param file The source file name.
+     * @param line The source line.
+     * @return `true` when the message was emitted.
+     */
+    pub func(self: &Logger) debug(message: *const u8, file: *const u8,
+                                  line: u32) -> bool {
+        return self.emit(LogLevel::Debug, message, file, line);
+    }
+
+    /*!
+     * @brief Emits an informational message.
+     * @param message The message text.
+     * @param file The source file name.
+     * @param line The source line.
+     * @return `true` when the message was emitted.
+     */
+    pub func(self: &Logger) info(message: *const u8, file: *const u8,
+                                 line: u32) -> bool {
+        return self.emit(LogLevel::Info, message, file, line);
+    }
+
+    /*!
+     * @brief Emits a warning.
+     * @param message The message text.
+     * @param file The source file name.
+     * @param line The source line.
+     * @return `true` when the message was emitted.
+     */
+    pub func(self: &Logger) warn(message: *const u8, file: *const u8,
+                                 line: u32) -> bool {
+        return self.emit(LogLevel::Warn, message, file, line);
+    }
+
+    /*!
+     * @brief Emits an error.
+     * @param message The message text.
+     * @param file The source file name.
+     * @param line The source line.
+     * @return `true` when the message was emitted.
+     */
+    pub func(self: &Logger) error(message: *const u8, file: *const u8,
+                                  line: u32) -> bool {
+        return self.emit(LogLevel::Error, message, file, line);
+    }
+
+    /*!
+     * @brief Emits a fatal error.
+     * @param message The message text.
+     * @param file The source file name.
+     * @param line The source line.
+     * @return `true` when the message was emitted.
+     */
+    pub func(self: &Logger) fatal(message: *const u8, file: *const u8,
+                                  line: u32) -> bool {
+        return self.emit(LogLevel::Fatal, message, file, line);
+    }
+
+    /*!
+     * @brief Builds and emits a record.
+     * @param level The event severity.
+     * @param message The message text.
+     * @param file The source file name.
+     * @param line The source line.
+     * @return `true` when the record was emitted.
+     */
+    func emit(self: &Logger, level: LogLevel, message: *const u8,
+              file: *const u8, line: u32) -> bool {
+        let record := LogRecord(level, cora_log_timestamp(), file, line,
+                                message);
+        return self.record(&record as *const LogRecord);
+    }
+}
+
+/*!
+ * @brief Returns the process-wide minimum log level.
+ * @return The runtime log level.
+ */
+pub func global_level() -> LogLevel {
+    return cora_log_level() as LogLevel;
+}
+
+/*!
+ * @brief Changes the process-wide minimum log level.
+ * @param level The new level.
+ */
+pub func set_global_level(level: LogLevel) -> void {
+    cora_log_set_level(level as u8);
+}
+
+/*!
+ * @brief Emits a message at a given severity through the global logger.
+ * @param level The event severity.
+ * @param message The message text.
+ * @return `true` when the message was emitted.
+ */
+pub func log(level: LogLevel, message: *const u8) -> bool {
+    if (level == LogLevel::Off) {
+        return false;
+    }
+    let configured := global_level();
+    if (configured == LogLevel::Off ||
+        (level as u8) < (configured as u8)) {
+        return false;
+    }
+    let record := LogRecord(level, cora_log_timestamp(), "", 0, message);
+    console_write(&record as *const LogRecord);
+    return true;
+}
+
+/*!
+ * @brief Emits a trace message through the global logger.
+ * @param message The message text.
+ * @return `true` when the message was emitted.
+ */
+pub func log_trace(message: *const u8) -> bool {
+    return log(LogLevel::Trace, message);
+}
+
+/*!
+ * @brief Emits a debug message through the global logger.
+ * @param message The message text.
+ * @return `true` when the message was emitted.
+ */
+pub func log_debug(message: *const u8) -> bool {
+    return log(LogLevel::Debug, message);
+}
+
+/*!
+ * @brief Emits an informational message through the global logger.
+ * @param message The message text.
+ * @return `true` when the message was emitted.
+ */
+pub func log_info(message: *const u8) -> bool {
+    return log(LogLevel::Info, message);
+}
+
+/*!
+ * @brief Emits a warning through the global logger.
+ * @param message The message text.
+ * @return `true` when the message was emitted.
+ */
+pub func log_warn(message: *const u8) -> bool {
+    return log(LogLevel::Warn, message);
+}
+
+/*!
+ * @brief Emits an error through the global logger.
+ * @param message The message text.
+ * @return `true` when the message was emitted.
+ */
+pub func log_error(message: *const u8) -> bool {
+    return log(LogLevel::Error, message);
+}
+
+/*!
+ * @brief Emits a fatal error through the global logger.
+ * @param message The message text.
+ * @return `true` when the message was emitted.
+ */
+pub func log_fatal(message: *const u8) -> bool {
+    return log(LogLevel::Fatal, message);
+}
+
+/*!
+ * @brief Writes a record to standard error.
+ * @param record The record to format.
+ */
+func console_write(record: *const LogRecord) -> void {
+    let mut buffer: u8[256] = [0; 256];
+    let mut formatter := Formatter(&mut buffer[0] as *mut u8, 256);
+    formatter.write_byte('[');
+    formatter.write_cstr(level_name(record.level));
+    formatter.write_cstr("] ");
+    formatter.write_cstr(record.message);
+    formatter.write_byte('\n');
+    write(StdStream::Stderr, &buffer[0] as *const u8, formatter.len());
+}
+
+/*!
+ * @brief Returns the short name of a log level.
+ * @param level The level to name.
+ * @return A null-terminated level name.
+ */
+func level_name(level: LogLevel) -> *const u8 {
+    if (level == LogLevel::Trace) {
+        return "TRACE";
+    }
+    if (level == LogLevel::Debug) {
+        return "DEBUG";
+    }
+    if (level == LogLevel::Info) {
+        return "INFO";
+    }
+    if (level == LogLevel::Warn) {
+        return "WARN";
+    }
+    if (level == LogLevel::Error) {
+        return "ERROR";
+    }
+    if (level == LogLevel::Fatal) {
+        return "FATAL";
+    }
+    return "OFF";
+}
+
+[[link_name("cora_log_timestamp")]]
+extern "C" func cora_log_timestamp() -> u64;
+
+[[link_name("cora_log_level")]]
+extern "C" func cora_log_level() -> u8;
+
+[[link_name("cora_log_set_level")]]
+extern "C" func cora_log_set_level(level: u8) -> void;

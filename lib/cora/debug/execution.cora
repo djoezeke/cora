@@ -1,0 +1,248 @@
+/*!
+ * @file execution.cora
+ * @brief Program lifecycle, exit codes, and termination hooks.
+ *
+ * The execution module tracks the high-level state of the process and provides
+ * a single place for terminating it.  Cleanup callbacks are ordinary values
+ * stored in caller-controlled arrays so the library never depends on hidden
+ * global allocation.
+ */
+
+import "core::type";
+
+/*!
+ * @brief Conventional process exit codes.
+ */
+pub enum ExitCode : i32 {
+    Success = 0,       //!< The program completed successfully.
+    Failure = 1,       //!< A generic failure occurred.
+    Usage = 2,         //!< The command line was invalid.
+    DataError = 65,    //!< Input data was malformed.
+    NoInput = 66,      //!< A required input was missing.
+    Software = 70,     //!< An internal software error occurred.
+    IoError = 74,      //!< An input/output error occurred.
+    TemporaryFailure = 75, //!< A transient failure occurred.
+    Permission = 77,   //!< Permission was denied.
+    Configuration = 78,//!< A configuration error occurred.
+}
+
+/*!
+ * @brief High-level state of the current process.
+ */
+pub enum ExecutionState {
+    Uninitialized, //!< Runtime initialization has not finished.
+    Starting,      //!< Constructors and startup hooks are running.
+    Running,       //!< User code is executing.
+    Suspended,     //!< Execution is paused by a debugger or host.
+    ShuttingDown,  //!< Exit hooks are running.
+    Terminated,    //!< The process has requested termination.
+}
+
+//! The successful exit code.
+pub comptime const exit_success: i32 = 0;
+//! The generic failure exit code.
+pub comptime const exit_failure: i32 = 1;
+//! The invalid-usage exit code.
+pub comptime const exit_usage: i32 = 2;
+
+/*!
+ * @brief A cleanup callback invoked during normal termination.
+ */
+pub using ExitCallback = func(context: *mut void) -> void;
+
+/*!
+ * @brief A callback and its caller-owned context.
+ */
+pub struct ExitHook {
+    pub callback: *const ExitCallback,  //!< The function to invoke.
+    pub context: *mut void,             //!< State passed to the callback.
+
+    /*!
+     * @brief Creates an exit hook.
+     * @param callback The function to invoke.
+     * @param context Optional callback state.
+     * @return The hook value.
+     */
+    pub func ExitHook(callback: *const ExitCallback,
+                      context: *mut void) -> ExitHook {
+        return ExitHook { callback: callback, context: context };
+    }
+}
+
+/*!
+ * @brief A fixed-capacity exit-hook collection.
+ */
+pub struct ExitHooks {
+    hooks: *mut ExitHook,
+    capacity: usize,
+    count: usize,
+
+    /*!
+     * @brief Creates an empty hook collection over caller storage.
+     * @param hooks The hook array.
+     * @param capacity The number of array entries.
+     * @return An empty collection.
+     */
+    pub func ExitHooks(hooks: *mut ExitHook, capacity: usize) -> ExitHooks {
+        return ExitHooks {
+            hooks: hooks,
+            capacity: capacity,
+            count: 0,
+        };
+    }
+
+    /*!
+     * @brief Returns the number of registered hooks.
+     * @return The current hook count.
+     */
+    pub func(self: &ExitHooks) count() -> usize {
+        return self.count;
+    }
+
+    /*!
+     * @brief Registers a cleanup hook.
+     * @param hook The hook to add.
+     * @return `true` on success.
+     */
+    pub func(self: &mut ExitHooks) add(hook: ExitHook) -> bool {
+        if (self.count >= self.capacity) {
+            return false;
+        }
+        self.hooks[self.count] = hook;
+        self.count += 1;
+        return true;
+    }
+
+    /*!
+     * @brief Runs every registered hook in reverse insertion order.
+     */
+    pub func(self: &ExitHooks) run() -> void {
+        let mut index := self.count;
+        while (index > 0) {
+            index -= 1;
+            if (self.hooks[index].callback != null) {
+                self.hooks[index].callback(self.hooks[index].context);
+            }
+        }
+    }
+
+    /*!
+     * @brief Removes every registered hook without invoking it.
+     */
+    pub func(self: &mut ExitHooks) clear() -> void {
+        self.count = 0;
+    }
+}
+
+/*!
+ * @brief The arguments passed to the program entry point.
+ */
+pub struct RunContext {
+    pub argc: i32,               //!< Number of arguments.
+    pub argv: *const *const u8,  //!< Null-terminated argument strings.
+
+    /*!
+     * @brief Creates a run context.
+     * @param argc The argument count.
+     * @param argv The argument vector.
+     * @return The run context.
+     */
+    pub func RunContext(argc: i32,
+                        argv: *const *const u8) -> RunContext {
+        return RunContext { argc: argc, argv: argv };
+    }
+
+    /*!
+     * @brief Returns the number of arguments.
+     * @return The argument count.
+     */
+    pub func(self: &RunContext) count() -> i32 {
+        return self.argc;
+    }
+
+    /*!
+     * @brief Returns an argument by index.
+     * @param index The argument index.
+     * @return The argument string, or `null` when out of range.
+     */
+    pub func(self: &RunContext) argument(index: i32) -> *const u8 {
+        if (index < 0 || index >= self.argc || self.argv == null) {
+            return null;
+        }
+        return self.argv[index];
+    }
+
+    /*!
+     * @brief Returns the program name.
+     * @return The first argument, or `null` when absent.
+     */
+    pub func(self: &RunContext) program() -> *const u8 {
+        return self.argument(0);
+    }
+}
+
+/*!
+ * @brief Returns the current execution state.
+ * @return The runtime state.
+ */
+pub func execution_state() -> ExecutionState {
+    return cora_execution_state() as ExecutionState;
+}
+
+/*!
+ * @brief Changes the current execution state.
+ * @param state The new state.
+ */
+pub func set_execution_state(state: ExecutionState) -> void {
+    cora_execution_set_state(state as u8);
+}
+
+/*!
+ * @brief Returns the process entry-point arguments.
+ * @return A run context describing `argc` and `argv`.
+ */
+pub func run_context() -> RunContext {
+    return RunContext(cora_execution_argc(), cora_execution_argv());
+}
+
+/*!
+ * @brief Terminates the process with an exit code.
+ * @param code The process exit status.
+ * @return This function never returns.
+ */
+pub func exit(code: i32) -> never {
+    cora_execution_exit(code);
+}
+
+/*!
+ * @brief Terminates the process successfully.
+ * @return This function never returns.
+ */
+pub func exit_ok() -> never {
+    exit(exit_success);
+}
+
+/*!
+ * @brief Terminates the process after a failure.
+ * @param code The failure exit status.
+ * @return This function never returns.
+ */
+pub func terminate(code: i32) -> never {
+    set_execution_state(ExecutionState::ShuttingDown);
+    exit(code);
+}
+
+[[link_name("cora_execution_state")]]
+extern "C" func cora_execution_state() -> u8;
+
+[[link_name("cora_execution_set_state")]]
+extern "C" func cora_execution_set_state(state: u8) -> void;
+
+[[link_name("cora_execution_argc")]]
+extern "C" func cora_execution_argc() -> i32;
+
+[[link_name("cora_execution_argv")]]
+extern "C" func cora_execution_argv() -> *const *const u8;
+
+[[link_name("cora_execution_exit")]]
+extern "C" func cora_execution_exit(code: i32) -> void;

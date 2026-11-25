@@ -1,0 +1,13 @@
+/*!
+ * @file lib.cora
+ * @brief Cryptographic primitives and key-management entry point.
+ *
+ * The crypto library favors explicit, allocation-free interfaces.  Hashing
+ * and stream encryption operate on caller-provided buffers, authenticated
+ * ciphers are pluggable through `Aead`, and key derivation uses HKDF-SHA-256.
+ */
+
+import "cora::crypto::hash";
+import "cora::crypto::rand";
+import "cora::crypto::cipher";
+import "cora::crypto::keys";

@@ -1,0 +1,217 @@
+/*!
+ * @file print.cora
+ * @brief Standard output, standard error, and formatted value printing.
+ *
+ * Printing is built on the bounded `Formatter` from `cora::text::format`.  The
+ * functions never allocate and write directly to the hosted standard streams
+ * through the `cora_print_*` runtime hooks.
+ */
+
+import "cora::text::format";
+
+/*!
+ * @brief A hosted standard stream.
+ */
+pub enum StdStream : i32 {
+    Stdout = 0,  //!< The process's standard output stream.
+    Stderr = 1,  //!< The process's standard error stream.
+}
+
+/*!
+ * @brief Writes raw bytes to a standard stream.
+ * @param stream The destination stream.
+ * @param data The bytes to write.
+ * @param count The number of bytes.
+ * @return The number of bytes accepted by the runtime, or a negative error.
+ */
+pub func write(stream: StdStream, data: *const u8, count: usize) -> isize {
+    return cora_print_write(stream as i32, data, count);
+}
+
+/*!
+ * @brief Writes a null-terminated string to a standard stream.
+ * @param stream The destination stream.
+ * @param text The string to write.
+ * @return The number of bytes written.
+ */
+pub func write_cstr(stream: StdStream, text: *const u8) -> usize {
+    if (text == null) {
+        return 0;
+    }
+    let mut length := 0;
+    while (text[length] != 0) {
+        length += 1;
+    }
+    let written := write(stream, text, length);
+    if (written <= 0) {
+        return 0;
+    }
+    return written as usize;
+}
+
+/*!
+ * @brief Flushes buffered output for a standard stream.
+ * @param stream The stream to flush.
+ */
+pub func flush(stream: StdStream) -> void {
+    cora_print_flush(stream as i32);
+}
+
+/*!
+ * @brief Writes a null-terminated string to standard output.
+ * @param text The string to write.
+ */
+pub func print(text: *const u8) -> void {
+    write_cstr(StdStream::Stdout, text);
+}
+
+/*!
+ * @brief Writes a null-terminated string and a newline to standard output.
+ * @param text The string to write.
+ */
+pub func println(text: *const u8) -> void {
+    print(text);
+    write(StdStream::Stdout, "\n", 1);
+}
+
+/*!
+ * @brief Writes a null-terminated string to standard error.
+ * @param text The string to write.
+ */
+pub func eprint(text: *const u8) -> void {
+    write_cstr(StdStream::Stderr, text);
+}
+
+/*!
+ * @brief Writes a null-terminated string and a newline to standard error.
+ * @param text The string to write.
+ */
+pub func eprintln(text: *const u8) -> void {
+    eprint(text);
+    write(StdStream::Stderr, "\n", 1);
+}
+
+/*!
+ * @brief Writes a byte range to standard output.
+ * @param data The bytes to write.
+ * @param count The number of bytes.
+ */
+pub func print_bytes(data: *const u8, count: usize) -> void {
+    write(StdStream::Stdout, data, count);
+}
+
+/*!
+ * @brief Writes a byte range and a newline to standard output.
+ * @param data The bytes to write.
+ * @param count The number of bytes.
+ */
+pub func println_bytes(data: *const u8, count: usize) -> void {
+    print_bytes(data, count);
+    write(StdStream::Stdout, "\n", 1);
+}
+
+/*!
+ * @brief Writes one character to standard output.
+ * @param value The byte to write.
+ */
+pub func print_char(value: u8) -> void {
+    let mut local := value;
+    write(StdStream::Stdout, &local as *const u8, 1);
+}
+
+/*!
+ * @brief Prints an unsigned integer in decimal.
+ * @param value The value to print.
+ * @return The number of bytes written.
+ */
+pub func print_u64(value: u64) -> usize {
+    let mut buffer: u8[32] = [0; 32];
+    let mut formatter := Formatter(&mut buffer[0] as *mut u8, 32);
+    let written := formatter.write_u64(value);
+    write(StdStream::Stdout, &buffer[0] as *const u8, written);
+    return written;
+}
+
+/*!
+ * @brief Prints a signed integer in decimal.
+ * @param value The value to print.
+ * @return The number of bytes written.
+ */
+pub func print_i64(value: i64) -> usize {
+    let mut buffer: u8[32] = [0; 32];
+    let mut formatter := Formatter(&mut buffer[0] as *mut u8, 32);
+    let written := formatter.write_i64(value);
+    write(StdStream::Stdout, &buffer[0] as *const u8, written);
+    return written;
+}
+
+/*!
+ * @brief Prints a floating-point value.
+ * @param value The value to print.
+ * @param precision The number of fractional digits.
+ * @return The number of bytes written.
+ */
+pub func print_f64(value: f64, precision: usize) -> usize {
+    let mut buffer: u8[64] = [0; 64];
+    let mut formatter := Formatter(&mut buffer[0] as *mut u8, 64);
+    let written := formatter.write_f64(value, precision);
+    write(StdStream::Stdout, &buffer[0] as *const u8, written);
+    return written;
+}
+
+/*!
+ * @brief Prints a boolean.
+ * @param value The value to print.
+ * @return The number of bytes written.
+ */
+pub func print_bool(value: bool) -> usize {
+    let mut buffer: u8[8] = [0; 8];
+    let mut formatter := Formatter(&mut buffer[0] as *mut u8, 8);
+    let written := formatter.write_bool(value);
+    write(StdStream::Stdout, &buffer[0] as *const u8, written);
+    return written;
+}
+
+/*!
+ * @brief Prints an unsigned integer followed by a newline.
+ * @param value The value to print.
+ */
+pub func println_u64(value: u64) -> void {
+    print_u64(value);
+    write(StdStream::Stdout, "\n", 1);
+}
+
+/*!
+ * @brief Prints a signed integer followed by a newline.
+ * @param value The value to print.
+ */
+pub func println_i64(value: i64) -> void {
+    print_i64(value);
+    write(StdStream::Stdout, "\n", 1);
+}
+
+/*!
+ * @brief Prints a floating-point value followed by a newline.
+ * @param value The value to print.
+ * @param precision The number of fractional digits.
+ */
+pub func println_f64(value: f64, precision: usize) -> void {
+    print_f64(value, precision);
+    write(StdStream::Stdout, "\n", 1);
+}
+
+/*!
+ * @brief Prints a boolean followed by a newline.
+ * @param value The value to print.
+ */
+pub func println_bool(value: bool) -> void {
+    print_bool(value);
+    write(StdStream::Stdout, "\n", 1);
+}
+
+[[link_name("cora_print_write")]]
+extern "C" func cora_print_write(stream: i32, data: *const u8,
+                                  count: usize) -> isize;
+
+[[link_name("cora_print_flush")]]
+extern "C" func cora_print_flush(stream: i32) -> void;

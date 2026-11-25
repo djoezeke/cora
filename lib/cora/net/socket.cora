@@ -1,0 +1,951 @@
+/*!
+ * @file socket.cora
+ * @brief Portable sockets, IP addresses, and TCP/UDP wrappers.
+ *
+ * The low-level `Socket` type owns an operating-system handle and delegates
+ * every operation to the `cora_net_*` runtime hooks.  `TcpStream`,
+ * `TcpListener`, and `UdpSocket` are thin, typed wrappers that keep the common
+ * cases ergonomic without hiding the underlying socket.
+ *
+ * Addresses are plain values so they can live on the stack and be passed to
+ * the runtime without allocation.
+ */
+
+import "core::type";
+import "cora::text::format";
+
+/*!
+ * @brief The address family of a socket.
+ */
+pub enum AddressFamily : i32 {
+    Unspecified = 0, //!< No family was specified.
+    Ipv4 = 2,        //!< Internet Protocol version 4.
+    Ipv6 = 10,       //!< Internet Protocol version 6.
+    Unix = 1,        //!< A local Unix-domain address.
+}
+
+/*!
+ * @brief The semantics of a socket.
+ */
+pub enum SocketType : i32 {
+    Stream = 1,  //!< Reliable, ordered byte stream.
+    Datagram = 2,//!< Unreliable, message-oriented datagrams.
+    Raw = 3,     //!< Raw protocol access.
+}
+
+/*!
+ * @brief The transport protocol used by a socket.
+ */
+pub enum Protocol : i32 {
+    Unspecified = 0, //!< Let the address family and socket type decide.
+    Tcp = 6,         //!< Transmission Control Protocol.
+    Udp = 17,        //!< User Datagram Protocol.
+}
+
+/*!
+ * @brief Directions that can be shut down independently.
+ */
+pub enum Shutdown : i32 {
+    Read = 0,   //!< Stop receiving data.
+    Write = 1,  //!< Stop sending data.
+    Both = 2,   //!< Stop both directions.
+}
+
+/*!
+ * @brief Portable socket failure classifications.
+ */
+pub enum SocketError {
+    InvalidAddress,    //!< The address is malformed or unsupported.
+    InvalidPort,       //!< The port is outside `0..65535`.
+    Unsupported,       //!< The platform does not support the operation.
+    WouldBlock,        //!< A non-blocking operation cannot complete yet.
+    ConnectionRefused, //!< The peer refused the connection.
+    ConnectionReset,   //!< The connection was reset by the peer.
+    NotConnected,      //!< The socket has no established connection.
+    AlreadyExists,     //!< The address is already in use.
+    PermissionDenied,  //!< The operation is not permitted.
+    TimedOut,          //!< The operation exceeded its deadline.
+    Closed,            //!< The socket has already been closed.
+    Other,             //!< An unclassified platform error.
+}
+
+/*!
+ * @brief An IPv4 address.
+ */
+pub struct Ipv4Address {
+    octets: u8[4],
+
+    /*!
+     * @brief Creates an IPv4 address from four octets.
+     * @param a The first octet.
+     * @param b The second octet.
+     * @param c The third octet.
+     * @param d The fourth octet.
+     * @return The address.
+     */
+    pub func Ipv4Address(a: u8, b: u8, c: u8, d: u8) -> Ipv4Address {
+        let mut octets: u8[4] = [0; 4];
+        octets[0] = a;
+        octets[1] = b;
+        octets[2] = c;
+        octets[3] = d;
+        return Ipv4Address { octets: octets };
+    }
+
+    /*!
+     * @brief Returns the unspecified address (`0.0.0.0`).
+     * @return The wildcard address.
+     */
+    pub func any() -> Ipv4Address {
+        return Ipv4Address(0, 0, 0, 0);
+    }
+
+    /*!
+     * @brief Returns the loopback address (`127.0.0.1`).
+     * @return The loopback address.
+     */
+    pub func loopback() -> Ipv4Address {
+        return Ipv4Address(127, 0, 0, 1);
+    }
+
+    /*!
+     * @brief Reads one octet.
+     * @param index The octet index, from zero.
+     * @return The octet value, or zero when out of range.
+     */
+    pub func(self: &Ipv4Address) octet(index: usize) -> u8 {
+        if (index >= 4) {
+            return 0;
+        }
+        return self.octets[index];
+    }
+
+    /*!
+     * @brief Returns the address as a big-endian unsigned integer.
+     * @return The packed address.
+     */
+    pub func(self: &Ipv4Address) to_u32() -> u32 {
+        return (self.octets[0] as u32) << 24 |
+               (self.octets[1] as u32) << 16 |
+               (self.octets[2] as u32) << 8 |
+               (self.octets[3] as u32);
+    }
+
+    /*!
+     * @brief Creates an address from a packed big-endian integer.
+     * @param value The packed address.
+     * @return The address.
+     */
+    pub func from_u32(value: u32) -> Ipv4Address {
+        return Ipv4Address((value >> 24) as u8, (value >> 16) as u8,
+                           (value >> 8) as u8, value as u8);
+    }
+
+    /*!
+     * @brief Compares two addresses.
+     * @param other The address to compare against.
+     * @return `true` when all octets match.
+     */
+    pub func(self: &Ipv4Address) equals(other: Ipv4Address) -> bool {
+        return self.octets[0] == other.octets[0] &&
+               self.octets[1] == other.octets[1] &&
+               self.octets[2] == other.octets[2] &&
+               self.octets[3] == other.octets[3];
+    }
+
+    /*!
+     * @brief Formats the address as dotted-decimal text.
+     * @param output The output buffer.
+     * @param capacity The output capacity.
+     * @return The number of characters written.
+     */
+    pub func(self: &Ipv4Address) to_string(output: *mut u8,
+                                           capacity: usize) -> usize {
+        return ipv4_to_string(*self, output, capacity);
+    }
+}
+
+/*!
+ * @brief A socket address for IPv4, IPv6, or a Unix-domain endpoint.
+ */
+pub struct SocketAddress {
+    family: AddressFamily,
+    bytes: u8[16],
+    port: u16,
+
+    /*!
+     * @brief Creates an IPv4 socket address.
+     * @param address The IPv4 address.
+     * @param port The port number.
+     * @return The socket address.
+     */
+    pub func ipv4(address: Ipv4Address, port: u16) -> SocketAddress {
+        let mut bytes: u8[16] = [0; 16];
+        bytes[0] = address.octet(0);
+        bytes[1] = address.octet(1);
+        bytes[2] = address.octet(2);
+        bytes[3] = address.octet(3);
+        return SocketAddress {
+            family: AddressFamily::Ipv4,
+            bytes: bytes,
+            port: port,
+        };
+    }
+
+    /*!
+     * @brief Creates an IPv6 socket address.
+     * @param address The sixteen address bytes.
+     * @param port The port number.
+     * @return The socket address.
+     */
+    pub func ipv6(address: *const u8, port: u16) -> SocketAddress {
+        let mut bytes: u8[16] = [0; 16];
+        let mut index := 0;
+        while (index < 16) {
+            bytes[index] = address[index];
+            index += 1;
+        }
+        return SocketAddress {
+            family: AddressFamily::Ipv6,
+            bytes: bytes,
+            port: port,
+        };
+    }
+
+    /*!
+     * @brief Creates an unspecified address for a family.
+     * @param family The desired address family.
+     * @param port The port number.
+     * @return The wildcard address.
+     */
+    pub func any(family: AddressFamily, port: u16) -> SocketAddress {
+        return SocketAddress {
+            family: family,
+            bytes: [0; 16],
+            port: port,
+        };
+    }
+
+    /*!
+     * @brief Returns the address family.
+     * @return The family.
+     */
+    pub func(self: &SocketAddress) family() -> AddressFamily {
+        return self.family;
+    }
+
+    /*!
+     * @brief Returns the port number.
+     * @return The port.
+     */
+    pub func(self: &SocketAddress) port() -> u16 {
+        return self.port;
+    }
+
+    /*!
+     * @brief Changes the port number.
+     * @param port The new port.
+     */
+    pub func(self: &mut SocketAddress) set_port(port: u16) -> void {
+        self.port = port;
+    }
+
+    /*!
+     * @brief Returns a pointer to the raw address bytes.
+     * @return The first address byte.
+     */
+    pub func(self: &SocketAddress) bytes() -> *const u8 {
+        return &self.bytes[0] as *const u8;
+    }
+
+    /*!
+     * @brief Returns the IPv4 address when this is an IPv4 endpoint.
+     * @return The IPv4 address, or the unspecified address.
+     */
+    pub func(self: &SocketAddress) as_ipv4() -> Ipv4Address {
+        if (self.family != AddressFamily::Ipv4) {
+            return Ipv4Address::any();
+        }
+        return Ipv4Address(self.bytes[0], self.bytes[1],
+                           self.bytes[2], self.bytes[3]);
+    }
+}
+
+/*!
+ * @brief A low-level socket handle.
+ */
+pub struct Socket {
+    handle: i32,
+    family: AddressFamily,
+    kind: SocketType,
+
+    /*!
+     * @brief Opens a socket.
+     * @param family The address family.
+     * @param kind The socket semantics.
+     * @param protocol The transport protocol.
+     * @return The socket, or an error.
+     */
+    pub func Socket(family: AddressFamily, kind: SocketType,
+                    protocol: Protocol) -> Result<Socket, SocketError> {
+        let handle := cora_net_socket(family as i32, kind as i32,
+                                      protocol as i32);
+        if (handle < 0) {
+            return Result<Socket, SocketError>::Err(
+                socket_error_from(handle as isize));
+        }
+        return Result<Socket, SocketError>::Ok(Socket {
+            handle: handle,
+            family: family,
+            kind: kind,
+        });
+    }
+
+    /*!
+     * @brief Wraps an existing operating-system socket handle.
+     * @param handle The platform handle.
+     * @param family The address family.
+     * @param kind The socket semantics.
+     * @return A socket that owns the handle.
+     */
+    pub func from_handle(handle: i32, family: AddressFamily,
+                         kind: SocketType) -> Socket {
+        return Socket {
+            handle: handle,
+            family: family,
+            kind: kind,
+        };
+    }
+
+    /*!
+     * @brief Returns `true` when the socket has a valid handle.
+     * @return Whether the socket is open.
+     */
+    pub func(self: &Socket) is_open() -> bool {
+        return self.handle >= 0;
+    }
+
+    /*!
+     * @brief Returns the platform handle.
+     * @return The integer socket handle.
+     */
+    pub func(self: &Socket) handle() -> i32 {
+        return self.handle;
+    }
+
+    /*!
+     * @brief Returns the address family.
+     * @return The family used to open the socket.
+     */
+    pub func(self: &Socket) family() -> AddressFamily {
+        return self.family;
+    }
+
+    /*!
+     * @brief Returns the socket semantics.
+     * @return The socket type.
+     */
+    pub func(self: &Socket) kind() -> SocketType {
+        return self.kind;
+    }
+
+    /*!
+     * @brief Binds the socket to a local address.
+     * @param address The local endpoint.
+     * @return `Result::Ok` on success, or an error.
+     */
+    pub func(self: &Socket) bind(
+        address: *const SocketAddress) -> Result<void, SocketError> {
+        if (!self.is_open()) {
+            return Result<void, SocketError>::Err(SocketError::Closed);
+        }
+        let result := cora_net_bind(self.handle, address);
+        if (result < 0) {
+            return Result<void, SocketError>::Err(
+                socket_error_from(result as isize));
+        }
+        return Result<void, SocketError>::Ok(null);
+    }
+
+    /*!
+     * @brief Connects the socket to a remote address.
+     * @param address The remote endpoint.
+     * @return `Result::Ok` on success, or an error.
+     */
+    pub func(self: &Socket) connect(
+        address: *const SocketAddress) -> Result<void, SocketError> {
+        if (!self.is_open()) {
+            return Result<void, SocketError>::Err(SocketError::Closed);
+        }
+        let result := cora_net_connect(self.handle, address);
+        if (result < 0) {
+            return Result<void, SocketError>::Err(
+                socket_error_from(result as isize));
+        }
+        return Result<void, SocketError>::Ok(null);
+    }
+
+    /*!
+     * @brief Marks a stream socket as accepting connections.
+     * @param backlog The maximum pending connection count.
+     * @return `Result::Ok` on success, or an error.
+     */
+    pub func(self: &Socket) listen(
+        backlog: i32) -> Result<void, SocketError> {
+        if (!self.is_open()) {
+            return Result<void, SocketError>::Err(SocketError::Closed);
+        }
+        let result := cora_net_listen(self.handle, backlog);
+        if (result < 0) {
+            return Result<void, SocketError>::Err(
+                socket_error_from(result as isize));
+        }
+        return Result<void, SocketError>::Ok(null);
+    }
+
+    /*!
+     * @brief Accepts a pending connection.
+     * @param peer Optional storage for the peer address.
+     * @return The accepted socket, or an error.
+     */
+    pub func(self: &Socket) accept(
+        peer: *mut SocketAddress) -> Result<Socket, SocketError> {
+        if (!self.is_open()) {
+            return Result<Socket, SocketError>::Err(SocketError::Closed);
+        }
+        let handle := cora_net_accept(self.handle, peer);
+        if (handle < 0) {
+            return Result<Socket, SocketError>::Err(
+                socket_error_from(handle as isize));
+        }
+        return Result<Socket, SocketError>::Ok(Socket {
+            handle: handle,
+            family: self.family,
+            kind: self.kind,
+        });
+    }
+
+    /*!
+     * @brief Sends bytes on a connected socket.
+     * @param data The bytes to send.
+     * @param count The number of bytes.
+     * @return The number of bytes accepted, or an error.
+     */
+    pub func(self: &Socket) send(data: *const u8,
+                                 count: usize) -> Result<usize, SocketError> {
+        return self.send_flags(data, count, 0);
+    }
+
+    /*!
+     * @brief Sends bytes with platform flags.
+     * @param data The bytes to send.
+     * @param count The number of bytes.
+     * @param flags Platform-specific message flags.
+     * @return The number of bytes accepted, or an error.
+     */
+    pub func(self: &Socket) send_flags(data: *const u8, count: usize,
+                                       flags: i32) -> Result<usize,
+                                                          SocketError> {
+        if (!self.is_open()) {
+            return Result<usize, SocketError>::Err(SocketError::Closed);
+        }
+        let written := cora_net_send(self.handle, data, count, flags);
+        if (written < 0) {
+            return Result<usize, SocketError>::Err(
+                socket_error_from(written));
+        }
+        return Result<usize, SocketError>::Ok(written as usize);
+    }
+
+    /*!
+     * @brief Receives bytes from a connected socket.
+     * @param buffer The destination buffer.
+     * @param count The buffer capacity.
+     * @return The number of bytes received, or an error.
+     */
+    pub func(self: &Socket) recv(buffer: *mut u8,
+                                 count: usize) -> Result<usize, SocketError> {
+        return self.recv_flags(buffer, count, 0);
+    }
+
+    /*!
+     * @brief Receives bytes with platform flags.
+     * @param buffer The destination buffer.
+     * @param count The buffer capacity.
+     * @param flags Platform-specific message flags.
+     * @return The number of bytes received, or an error.
+     */
+    pub func(self: &Socket) recv_flags(buffer: *mut u8, count: usize,
+                                       flags: i32) -> Result<usize,
+                                                          SocketError> {
+        if (!self.is_open()) {
+            return Result<usize, SocketError>::Err(SocketError::Closed);
+        }
+        let read := cora_net_recv(self.handle, buffer, count, flags);
+        if (read < 0) {
+            return Result<usize, SocketError>::Err(
+                socket_error_from(read));
+        }
+        return Result<usize, SocketError>::Ok(read as usize);
+    }
+
+    /*!
+     * @brief Sends a datagram to a specific address.
+     * @param data The datagram bytes.
+     * @param count The number of bytes.
+     * @param address The destination address.
+     * @return The number of bytes sent, or an error.
+     */
+    pub func(self: &Socket) send_to(data: *const u8, count: usize,
+                                    address: *const SocketAddress) -> Result<usize,
+                                                                           SocketError> {
+        if (!self.is_open()) {
+            return Result<usize, SocketError>::Err(SocketError::Closed);
+        }
+        let written := cora_net_send_to(self.handle, data, count, address);
+        if (written < 0) {
+            return Result<usize, SocketError>::Err(
+                socket_error_from(written));
+        }
+        return Result<usize, SocketError>::Ok(written as usize);
+    }
+
+    /*!
+     * @brief Receives a datagram and its source address.
+     * @param buffer The destination buffer.
+     * @param count The buffer capacity.
+     * @param source Storage for the source address.
+     * @return The number of bytes received, or an error.
+     */
+    pub func(self: &Socket) recv_from(buffer: *mut u8, count: usize,
+                                      source: *mut SocketAddress) -> Result<usize,
+                                                                             SocketError> {
+        if (!self.is_open()) {
+            return Result<usize, SocketError>::Err(SocketError::Closed);
+        }
+        let read := cora_net_recv_from(self.handle, buffer, count, source);
+        if (read < 0) {
+            return Result<usize, SocketError>::Err(
+                socket_error_from(read));
+        }
+        return Result<usize, SocketError>::Ok(read as usize);
+    }
+
+    /*!
+     * @brief Changes the non-blocking mode of the socket.
+     * @param enabled Whether operations should return `WouldBlock`.
+     * @return `Result::Ok` on success, or an error.
+     */
+    pub func(self: &Socket) set_nonblocking(
+        enabled: bool) -> Result<void, SocketError> {
+        if (!self.is_open()) {
+            return Result<void, SocketError>::Err(SocketError::Closed);
+        }
+        let result := cora_net_set_nonblocking(self.handle, enabled);
+        if (result < 0) {
+            return Result<void, SocketError>::Err(
+                socket_error_from(result as isize));
+        }
+        return Result<void, SocketError>::Ok(null);
+    }
+
+    /*!
+     * @brief Shuts down one or both directions of a stream socket.
+     * @param how The direction to shut down.
+     * @return `Result::Ok` on success, or an error.
+     */
+    pub func(self: &Socket) shutdown(
+        how: Shutdown) -> Result<void, SocketError> {
+        if (!self.is_open()) {
+            return Result<void, SocketError>::Err(SocketError::Closed);
+        }
+        let result := cora_net_shutdown(self.handle, how as i32);
+        if (result < 0) {
+            return Result<void, SocketError>::Err(
+                socket_error_from(result as isize));
+        }
+        return Result<void, SocketError>::Ok(null);
+    }
+
+    /*!
+     * @brief Closes the socket.
+     */
+    pub func(self: &mut Socket) close() -> void {
+        if (self.handle >= 0) {
+            cora_net_close(self.handle);
+            self.handle = -1;
+        }
+    }
+
+    /*!
+     * @brief Closes the socket when it leaves scope.
+     */
+    pub func ~Socket() -> void {
+        self.close();
+    }
+}
+
+/*!
+ * @brief A connected TCP byte stream.
+ */
+pub struct TcpStream {
+    socket: Socket,
+
+    /*!
+     * @brief Creates a stream from an established socket.
+     * @param socket The connected socket.
+     * @return The stream.
+     */
+    pub func TcpStream(socket: Socket) -> TcpStream {
+        return TcpStream { socket: socket };
+    }
+
+    /*!
+     * @brief Connects to a remote address.
+     * @param address The remote endpoint.
+     * @return The connected stream, or an error.
+     */
+    pub func connect(
+        address: SocketAddress) -> Result<TcpStream, SocketError> {
+        let result := Socket(AddressFamily::Ipv4, SocketType::Stream,
+                             Protocol::Tcp);
+        return match (result) {
+            Result<Socket, SocketError>::Ok(value) => {
+                let mut socket := value;
+                let connected := socket.connect(&address as *const SocketAddress);
+                if (is_err(connected)) {
+                    Result<TcpStream, SocketError>::Err(
+                        SocketError::NotConnected)
+                } else {
+                    Result<TcpStream, SocketError>::Ok(
+                        TcpStream { socket: socket })
+                }
+            },
+            Result<Socket, SocketError>::Err(error) => {
+                Result<TcpStream, SocketError>::Err(error)
+            },
+        };
+    }
+
+    /*!
+     * @brief Reads bytes from the stream.
+     * @param buffer The destination buffer.
+     * @param count The buffer capacity.
+     * @return The number of bytes read, or an error.
+     */
+    pub func(self: &TcpStream) read(buffer: *mut u8,
+                                    count: usize) -> Result<usize,
+                                                           SocketError> {
+        return self.socket.recv(buffer, count);
+    }
+
+    /*!
+     * @brief Writes bytes to the stream.
+     * @param data The bytes to write.
+     * @param count The number of bytes.
+     * @return The number of bytes written, or an error.
+     */
+    pub func(self: &TcpStream) write(data: *const u8,
+                                     count: usize) -> Result<usize,
+                                                            SocketError> {
+        return self.socket.send(data, count);
+    }
+
+    /*!
+     * @brief Changes the non-blocking mode.
+     * @param enabled Whether operations should return `WouldBlock`.
+     * @return `Result::Ok` on success, or an error.
+     */
+    pub func(self: &TcpStream) set_nonblocking(
+        enabled: bool) -> Result<void, SocketError> {
+        return self.socket.set_nonblocking(enabled);
+    }
+
+    /*!
+     * @brief Shuts down the stream.
+     * @param how The direction to shut down.
+     * @return `Result::Ok` on success, or an error.
+     */
+    pub func(self: &TcpStream) shutdown(
+        how: Shutdown) -> Result<void, SocketError> {
+        return self.socket.shutdown(how);
+    }
+
+    /*!
+     * @brief Closes the stream.
+     */
+    pub func(self: &mut TcpStream) close() -> void {
+        self.socket.close();
+    }
+}
+
+/*!
+ * @brief A TCP socket accepting incoming connections.
+ */
+pub struct TcpListener {
+    socket: Socket,
+
+    /*!
+     * @brief Binds a listener to a local address.
+     * @param address The local endpoint.
+     * @param backlog The maximum pending connection count.
+     * @return The listener, or an error.
+     */
+    pub func bind(address: SocketAddress,
+                  backlog: i32) -> Result<TcpListener, SocketError> {
+        let result := Socket(AddressFamily::Ipv4, SocketType::Stream,
+                             Protocol::Tcp);
+        return match (result) {
+            Result<Socket, SocketError>::Ok(value) => {
+                let socket := value;
+                let bound := socket.bind(&address as *const SocketAddress);
+                if (is_err(bound)) {
+                    return Result<TcpListener, SocketError>::Err(
+                        SocketError::InvalidAddress);
+                }
+                let listening := socket.listen(backlog);
+                if (is_err(listening)) {
+                    return Result<TcpListener, SocketError>::Err(
+                        SocketError::Unsupported);
+                }
+                Result<TcpListener, SocketError>::Ok(
+                    TcpListener { socket: socket })
+            },
+            Result<Socket, SocketError>::Err(error) => {
+                Result<TcpListener, SocketError>::Err(error)
+            },
+        };
+    }
+
+    /*!
+     * @brief Accepts a pending connection.
+     * @param peer Optional storage for the peer address.
+     * @return The accepted stream, or an error.
+     */
+    pub func(self: &TcpListener) accept(
+        peer: *mut SocketAddress) -> Result<TcpStream, SocketError> {
+        let result := self.socket.accept(peer);
+        return match (result) {
+            Result<Socket, SocketError>::Ok(value) => {
+                Result<TcpStream, SocketError>::Ok(TcpStream { socket: value })
+            },
+            Result<Socket, SocketError>::Err(error) => {
+                Result<TcpStream, SocketError>::Err(error)
+            },
+        };
+    }
+
+    /*!
+     * @brief Closes the listener.
+     */
+    pub func(self: &mut TcpListener) close() -> void {
+        self.socket.close();
+    }
+}
+
+/*!
+ * @brief A UDP datagram socket.
+ */
+pub struct UdpSocket {
+    socket: Socket,
+
+    /*!
+     * @brief Binds a UDP socket to a local address.
+     * @param address The local endpoint.
+     * @return The socket, or an error.
+     */
+    pub func bind(address: SocketAddress) -> Result<UdpSocket,
+                                                   SocketError> {
+        let result := Socket(AddressFamily::Ipv4, SocketType::Datagram,
+                             Protocol::Udp);
+        return match (result) {
+            Result<Socket, SocketError>::Ok(value) => {
+                let socket := value;
+                let bound := socket.bind(&address as *const SocketAddress);
+                if (is_err(bound)) {
+                    return Result<UdpSocket, SocketError>::Err(
+                        SocketError::InvalidAddress);
+                }
+                Result<UdpSocket, SocketError>::Ok(
+                    UdpSocket { socket: socket })
+            },
+            Result<Socket, SocketError>::Err(error) => {
+                Result<UdpSocket, SocketError>::Err(error)
+            },
+        };
+    }
+
+    /*!
+     * @brief Sends a datagram.
+     * @param data The datagram bytes.
+     * @param count The number of bytes.
+     * @param address The destination address.
+     * @return The number of bytes sent, or an error.
+     */
+    pub func(self: &UdpSocket) send_to(data: *const u8, count: usize,
+                                       address: SocketAddress) -> Result<usize,
+                                                                          SocketError> {
+        return self.socket.send_to(data, count,
+                                   &address as *const SocketAddress);
+    }
+
+    /*!
+     * @brief Receives a datagram.
+     * @param buffer The destination buffer.
+     * @param count The buffer capacity.
+     * @param source Storage for the source address.
+     * @return The number of bytes received, or an error.
+     */
+    pub func(self: &UdpSocket) recv_from(buffer: *mut u8, count: usize,
+                                         source: *mut SocketAddress) -> Result<usize,
+                                                                                SocketError> {
+        return self.socket.recv_from(buffer, count, source);
+    }
+
+    /*!
+     * @brief Closes the socket.
+     */
+    pub func(self: &mut UdpSocket) close() -> void {
+        self.socket.close();
+    }
+}
+
+/*!
+ * @brief Parses a dotted-decimal IPv4 address.
+ * @param text The null-terminated address text.
+ * @param output The destination address.
+ * @return `true` when the text was a valid address.
+ */
+pub func parse_ipv4(text: *const u8, output: *mut Ipv4Address) -> bool {
+    if (text == null || output == null) {
+        return false;
+    }
+    let mut octets: u8[4] = [0; 4];
+    let mut count := 0;
+    let mut value: u32 = 0;
+    let mut digits := 0;
+    let mut index := 0;
+    while (text[index] != 0) {
+        let byte := text[index];
+        if (byte >= '0' && byte <= '9') {
+            value = value * 10 + (byte - '0') as u32;
+            digits += 1;
+            if (value > 255 || digits > 3) {
+                return false;
+            }
+        } else if (byte == '.') {
+            if (digits == 0 || count >= 3) {
+                return false;
+            }
+            octets[count] = value as u8;
+            count += 1;
+            value = 0;
+            digits = 0;
+        } else {
+            return false;
+        }
+        index += 1;
+    }
+    if (digits == 0 || count != 3) {
+        return false;
+    }
+    octets[3] = value as u8;
+    *output = Ipv4Address(octets[0], octets[1], octets[2], octets[3]);
+    return true;
+}
+
+/*!
+ * @brief Formats an IPv4 address as dotted-decimal text.
+ * @param address The address to format.
+ * @param output The output buffer.
+ * @param capacity The output capacity.
+ * @return The number of characters written.
+ */
+pub func ipv4_to_string(address: Ipv4Address, output: *mut u8,
+                        capacity: usize) -> usize {
+    let mut formatter := Formatter(output, capacity);
+    formatter.write_u64(address.octet(0) as u64);
+    formatter.write_byte('.');
+    formatter.write_u64(address.octet(1) as u64);
+    formatter.write_byte('.');
+    formatter.write_u64(address.octet(2) as u64);
+    formatter.write_byte('.');
+    formatter.write_u64(address.octet(3) as u64);
+    return formatter.len();
+}
+
+/*!
+ * @brief Maps a runtime socket error code to a portable classification.
+ * @param code The negative runtime code.
+ * @return The portable error value.
+ */
+func socket_error_from(code: isize) -> SocketError {
+    if (code == -11) {
+        return SocketError::WouldBlock;
+    }
+    if (code == -111) {
+        return SocketError::ConnectionRefused;
+    }
+    if (code == -104) {
+        return SocketError::ConnectionReset;
+    }
+    if (code == -98) {
+        return SocketError::AlreadyExists;
+    }
+    if (code == -13) {
+        return SocketError::PermissionDenied;
+    }
+    if (code == -110) {
+        return SocketError::TimedOut;
+    }
+    if (code == -22) {
+        return SocketError::InvalidAddress;
+    }
+    return SocketError::Other;
+}
+
+[[link_name("cora_net_socket")]]
+extern "C" func cora_net_socket(family: i32, kind: i32,
+                                 protocol: i32) -> i32;
+
+[[link_name("cora_net_bind")]]
+extern "C" func cora_net_bind(handle: i32,
+                               address: *const SocketAddress) -> i32;
+
+[[link_name("cora_net_connect")]]
+extern "C" func cora_net_connect(handle: i32,
+                                  address: *const SocketAddress) -> i32;
+
+[[link_name("cora_net_listen")]]
+extern "C" func cora_net_listen(handle: i32, backlog: i32) -> i32;
+
+[[link_name("cora_net_accept")]]
+extern "C" func cora_net_accept(handle: i32, peer: *mut SocketAddress) -> i32;
+
+[[link_name("cora_net_send")]]
+extern "C" func cora_net_send(handle: i32, data: *const u8, count: usize,
+                               flags: i32) -> isize;
+
+[[link_name("cora_net_recv")]]
+extern "C" func cora_net_recv(handle: i32, buffer: *mut u8, count: usize,
+                               flags: i32) -> isize;
+
+[[link_name("cora_net_send_to")]]
+extern "C" func cora_net_send_to(handle: i32, data: *const u8,
+                                  count: usize,
+                                  address: *const SocketAddress) -> isize;
+
+[[link_name("cora_net_recv_from")]]
+extern "C" func cora_net_recv_from(handle: i32, buffer: *mut u8,
+                                    count: usize,
+                                    source: *mut SocketAddress) -> isize;
+
+[[link_name("cora_net_set_nonblocking")]]
+extern "C" func cora_net_set_nonblocking(handle: i32,
+                                          enabled: bool) -> i32;
+
+[[link_name("cora_net_shutdown")]]
+extern "C" func cora_net_shutdown(handle: i32, how: i32) -> i32;
+
+[[link_name("cora_net_close")]]
+extern "C" func cora_net_close(handle: i32) -> void;

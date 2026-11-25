@@ -1,0 +1,276 @@
+/*!
+ * @file concept.cora
+ * @brief Concept descriptions and small reusable constraints.
+ *
+ * Cora concepts are compile-time contracts.  Runtime reflection cannot inspect
+ * a concept directly, so this module pairs a few broadly useful concepts with
+ * `ConceptInfo` records that libraries can publish in documentation, plugin
+ * manifests, or diagnostics.
+ */
+
+import "core::type";
+
+/*!
+ * @brief The category of a concept.
+ */
+pub enum ConceptKind {
+    Marker,        //!< A concept with no callable requirements.
+    Requirement,   //!< A concept defined by one or more requirements.
+    Convertible,   //!< A concept describing a conversion.
+    Numeric,       //!< A numeric capability.
+    Container,     //!< A collection-like capability.
+    Callable,      //!< A callable capability.
+    Custom,        //!< A library-defined concept.
+}
+
+/*!
+ * @brief A stable identifier for a concept.
+ */
+pub struct ConceptId {
+    value: usize,
+
+    /*!
+     * @brief Creates a concept identifier.
+     * @param value The numeric identifier.
+     * @return The identifier.
+     */
+    pub func ConceptId(value: usize) -> ConceptId {
+        return ConceptId { value: value };
+    }
+
+    /*!
+     * @brief Returns the numeric identifier.
+     * @return The identifier value.
+     */
+    pub func(self: &ConceptId) raw() -> usize {
+        return self.value;
+    }
+
+    /*!
+     * @brief Compares two concept identifiers.
+     * @param other The identifier to compare against.
+     * @return `true` when both identifiers are equal.
+     */
+    pub func(self: &ConceptId) equals(other: ConceptId) -> bool {
+        return self.value == other.value;
+    }
+}
+
+/*!
+ * @brief One documented concept requirement.
+ */
+pub struct ConceptRequirement {
+    pub name: *const u8,  //!< Null-terminated requirement name.
+    pub note: *const u8,  //!< Null-terminated explanation.
+
+    /*!
+     * @brief Creates a requirement description.
+     * @param name The requirement name.
+     * @param note The requirement explanation.
+     * @return The description.
+     */
+    pub func ConceptRequirement(name: *const u8,
+                                note: *const u8) -> ConceptRequirement {
+        return ConceptRequirement { name: name, note: note };
+    }
+}
+
+/*!
+ * @brief A runtime description of a concept.
+ */
+pub struct ConceptInfo {
+    pub id: ConceptId,                    //!< Stable concept identifier.
+    pub name: *const u8,                  //!< Null-terminated concept name.
+    pub kind: ConceptKind,                //!< Concept category.
+    pub requirements: *const ConceptRequirement, //!< Requirement array.
+    pub requirement_count: usize,         //!< Number of requirements.
+
+    /*!
+     * @brief Creates a concept description.
+     * @param id The concept identifier.
+     * @param name The concept name.
+     * @param kind The concept category.
+     * @param requirements The requirement array.
+     * @param requirement_count The number of requirements.
+     * @return The concept description.
+     */
+    pub func ConceptInfo(id: ConceptId, name: *const u8, kind: ConceptKind,
+                         requirements: *const ConceptRequirement,
+                         requirement_count: usize) -> ConceptInfo {
+        return ConceptInfo {
+            id: id,
+            name: name,
+            kind: kind,
+            requirements: requirements,
+            requirement_count: requirement_count,
+        };
+    }
+
+    /*!
+     * @brief Returns the concept name.
+     * @return A null-terminated concept name.
+     */
+    pub func(self: &ConceptInfo) name() -> *const u8 {
+        return self.name;
+    }
+
+    /*!
+     * @brief Returns a requirement by index.
+     * @param index The requirement index.
+     * @return A pointer to the requirement, or `null`.
+     */
+    pub func(self: &ConceptInfo) requirement(
+        index: usize) -> *const ConceptRequirement {
+        if (index >= self.requirement_count ||
+            self.requirements == null) {
+            return null;
+        }
+        return &self.requirements[index] as *const ConceptRequirement;
+    }
+
+    /*!
+     * @brief Tests whether the concept has no requirements.
+     * @return `true` for a marker concept with zero requirements.
+     */
+    pub func(self: &ConceptInfo) is_marker() -> bool {
+        return self.requirement_count == 0;
+    }
+}
+
+/*!
+ * @brief A fixed-capacity registry of concept descriptions.
+ */
+pub struct ConceptRegistry {
+    entries: *mut ConceptInfo,
+    capacity: usize,
+    count: usize,
+
+    /*!
+     * @brief Creates an empty registry over caller storage.
+     * @param entries The concept array.
+     * @param capacity The number of array entries.
+     * @return An empty registry.
+     */
+    pub func ConceptRegistry(entries: *mut ConceptInfo,
+                             capacity: usize) -> ConceptRegistry {
+        return ConceptRegistry {
+            entries: entries,
+            capacity: capacity,
+            count: 0,
+        };
+    }
+
+    /*!
+     * @brief Returns the number of registered concepts.
+     * @return The current concept count.
+     */
+    pub func(self: &ConceptRegistry) count() -> usize {
+        return self.count;
+    }
+
+    /*!
+     * @brief Registers a concept description.
+     * @param info The description to add.
+     * @return `true` on success.
+     */
+    pub func(self: &mut ConceptRegistry) add(info: ConceptInfo) -> bool {
+        if (self.count >= self.capacity) {
+            return false;
+        }
+        self.entries[self.count] = info;
+        self.count += 1;
+        return true;
+    }
+
+    /*!
+     * @brief Returns a concept description by index.
+     * @param index The entry index.
+     * @return A pointer to the description, or `null`.
+     */
+    pub func(self: &ConceptRegistry) at(
+        index: usize) -> *const ConceptInfo {
+        if (index >= self.count) {
+            return null;
+        }
+        return &self.entries[index] as *const ConceptInfo;
+    }
+
+    /*!
+     * @brief Finds a concept by name.
+     * @param name The null-terminated concept name.
+     * @return The entry index, or `Option::None`.
+     */
+    pub func(self: &ConceptRegistry) find(
+        name: *const u8) -> Option<usize> {
+        let mut index := 0;
+        while (index < self.count) {
+            if (cstr_equals(self.entries[index].name, name)) {
+                return Option<usize>::Some(index);
+            }
+            index += 1;
+        }
+        return Option<usize>::None;
+    }
+}
+
+/*!
+ * @brief Types that can be compared with `==` and `<`.
+ * @tparam T The compared type.
+ */
+pub concept Comparable<T> = requires(left: T, right: T) {
+    { left == right } -> bool;
+    { left < right } -> bool;
+};
+
+/*!
+ * @brief Types with a default constructor.
+ * @tparam T The constructed type.
+ */
+pub concept DefaultConstructible<T> = requires() {
+    { T() } -> T;
+};
+
+/*!
+ * @brief Types that can be invoked without arguments.
+ * @tparam T The callable type.
+ */
+pub concept Callable<T> = requires(value: T) {
+    value();
+};
+
+/*!
+ * @brief Collection-like types that report their size.
+ * @tparam T The container type.
+ */
+pub concept Container<T> = requires(value: &T) {
+    { value.len() } -> usize;
+    { value.is_empty() } -> bool;
+};
+
+/*!
+ * @brief Types that expose a null-terminated display string.
+ * @tparam T The displayable type.
+ */
+pub concept Displayable<T> = requires(value: &T) {
+    { value.format() } -> *const u8;
+};
+
+/*!
+ * @brief Compares two null-terminated strings for equality.
+ * @param left The first string.
+ * @param right The second string.
+ * @return `true` when both strings contain the same bytes.
+ */
+func cstr_equals(left: *const u8, right: *const u8) -> bool {
+    if (left == null || right == null) {
+        return left == right;
+    }
+    let mut index := 0;
+    while (left[index] != 0 && right[index] != 0) {
+        if (left[index] != right[index]) {
+            return false;
+        }
+        index += 1;
+    }
+    return left[index] == right[index];
+}

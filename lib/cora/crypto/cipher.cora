@@ -1,0 +1,421 @@
+/*!
+ * @file cipher.cora
+ * @brief Symmetric stream ciphers and authenticated-encryption interfaces.
+ *
+ * `ChaCha20` provides the standard 256-bit key, 96-bit nonce stream cipher.
+ * The `Aead` type is a small dynamic interface that platform or third-party
+ * implementations can use to expose authenticated ciphers without changing
+ * the caller-facing API.
+ *
+ * Stream ciphers encrypt and decrypt with the same operation; callers must
+ * never reuse a key/nonce pair.
+ */
+
+import "core::type";
+
+/*!
+ * @brief Size of a ChaCha20 key in bytes.
+ */
+pub comptime const chacha20_key_size: usize = 32;
+
+/*!
+ * @brief Size of a ChaCha20 nonce in bytes.
+ */
+pub comptime const chacha20_nonce_size: usize = 12;
+
+/*!
+ * @brief Size of a ChaCha20 keystream block in bytes.
+ */
+pub comptime const chacha20_block_size: usize = 64;
+
+/*!
+ * @brief Reasons an encryption operation may fail.
+ */
+pub enum CipherError {
+    InvalidKey,          //!< The key length is unsupported.
+    InvalidNonce,        //!< The nonce length is unsupported.
+    InvalidLength,       //!< A buffer length is invalid.
+    BufferTooSmall,      //!< The output buffer cannot hold the result.
+    AuthenticationFailed,//!< The authentication tag did not verify.
+    Unsupported,         //!< The requested operation is unavailable.
+}
+
+/*!
+ * @brief The ChaCha20 stream cipher.
+ */
+pub struct ChaCha20 {
+    key: u32[8],
+    nonce: u32[3],
+    counter: u32,
+    block: u8[64],
+    available: usize,
+    offset: usize,
+
+    /*!
+     * @brief Creates a cipher from a 32-byte key and a 12-byte nonce.
+     * @param key The secret key bytes.
+     * @param nonce The nonce bytes.
+     * @return A cipher ready to produce the first keystream block.
+     */
+    pub func ChaCha20(key: *const u8, nonce: *const u8) -> ChaCha20 {
+        let mut cipher := ChaCha20 {
+            key: [0; 8],
+            nonce: [0; 3],
+            counter: 0,
+            block: [0; 64],
+            available: 0,
+            offset: 0,
+        };
+        let mut index := 0;
+        while (index < 8) {
+            cipher.key[index] = load32_le(key + index * 4);
+            index += 1;
+        }
+        index = 0;
+        while (index < 3) {
+            cipher.nonce[index] = load32_le(nonce + index * 4);
+            index += 1;
+        }
+        return cipher;
+    }
+
+    /*!
+     * @brief Creates a cipher while checking the key and nonce lengths.
+     * @param key The secret key bytes.
+     * @param key_length The key length; must be 32.
+     * @param nonce The nonce bytes.
+     * @param nonce_length The nonce length; must be 12.
+     * @return The cipher, or an error describing the invalid length.
+     */
+    pub func from_lengths(key: *const u8, key_length: usize,
+                          nonce: *const u8,
+                          nonce_length: usize) -> Result<ChaCha20,
+                                                       CipherError> {
+        if (key_length != chacha20_key_size) {
+            return Result<ChaCha20, CipherError>::Err(
+                CipherError::InvalidKey);
+        }
+        if (nonce_length != chacha20_nonce_size) {
+            return Result<ChaCha20, CipherError>::Err(
+                CipherError::InvalidNonce);
+        }
+        return Result<ChaCha20, CipherError>::Ok(
+            ChaCha20(key, nonce));
+    }
+
+    /*!
+     * @brief Creates a cipher from a 32-byte seed.
+     *
+     * The nonce is derived deterministically from the seed, so this
+     * constructor is intended for tests and for protocols that already
+     * separate their key and nonce inputs.
+     *
+     * @param seed The 32-byte seed.
+     * @return A deterministic cipher.
+     */
+    pub func from_seed(seed: *const u8) -> ChaCha20 {
+        return ChaCha20(seed, seed + 16);
+    }
+
+    /*!
+     * @brief Rotates a 32-bit value left.
+     * @param value The value to rotate.
+     * @param amount The rotation amount.
+     * @return The rotated value.
+     */
+    func rotate_left(value: u32, amount: u32) -> u32 {
+        return (value << amount) | (value >> (32 - amount));
+    }
+
+    /*!
+     * @brief Applies one ChaCha quarter-round to four state words.
+     * @param state The 16-word working state.
+     * @param a The first word index.
+     * @param b The second word index.
+     * @param c The third word index.
+     * @param d The fourth word index.
+     */
+    func quarter_round(state: *mut u32, a: usize, b: usize, c: usize,
+                       d: usize) -> void {
+        state[a] += state[b];
+        state[d] ^= state[a];
+        state[d] = ChaCha20::rotate_left(state[d], 16);
+        state[c] += state[d];
+        state[b] ^= state[c];
+        state[b] = ChaCha20::rotate_left(state[b], 12);
+        state[a] += state[b];
+        state[d] ^= state[a];
+        state[d] = ChaCha20::rotate_left(state[d], 8);
+        state[c] += state[d];
+        state[b] ^= state[c];
+        state[b] = ChaCha20::rotate_left(state[b], 7);
+    }
+
+    /*!
+     * @brief Generates the next 64-byte keystream block.
+     */
+    func generate_block(self: &mut ChaCha20) -> void {
+        let mut state: u32[16] = [0; 16];
+        state[0] = 0x61707865;
+        state[1] = 0x3320646E;
+        state[2] = 0x79622D32;
+        state[3] = 0x6B206574;
+        let mut index := 0;
+        while (index < 8) {
+            state[4 + index] = self.key[index];
+            index += 1;
+        }
+        state[12] = self.counter;
+        state[13] = self.nonce[0];
+        state[14] = self.nonce[1];
+        state[15] = self.nonce[2];
+
+        let mut working: u32[16] = [0; 16];
+        index = 0;
+        while (index < 16) {
+            working[index] = state[index];
+            index += 1;
+        }
+
+        index = 0;
+        while (index < 10) {
+            ChaCha20::quarter_round(&mut working[0] as *mut u32,
+                                    0, 4, 8, 12);
+            ChaCha20::quarter_round(&mut working[0] as *mut u32,
+                                    1, 5, 9, 13);
+            ChaCha20::quarter_round(&mut working[0] as *mut u32,
+                                    2, 6, 10, 14);
+            ChaCha20::quarter_round(&mut working[0] as *mut u32,
+                                    3, 7, 11, 15);
+            ChaCha20::quarter_round(&mut working[0] as *mut u32,
+                                    0, 5, 10, 15);
+            ChaCha20::quarter_round(&mut working[0] as *mut u32,
+                                    1, 6, 11, 12);
+            ChaCha20::quarter_round(&mut working[0] as *mut u32,
+                                    2, 7, 8, 13);
+            ChaCha20::quarter_round(&mut working[0] as *mut u32,
+                                    3, 4, 9, 14);
+            index += 1;
+        }
+
+        index = 0;
+        while (index < 16) {
+            let value := working[index] + state[index];
+            self.block[index * 4] = value as u8;
+            self.block[index * 4 + 1] = (value >> 8) as u8;
+            self.block[index * 4 + 2] = (value >> 16) as u8;
+            self.block[index * 4 + 3] = (value >> 24) as u8;
+            index += 1;
+        }
+
+        self.counter += 1;
+        self.available = 64;
+        self.offset = 0;
+    }
+
+    /*!
+     * @brief XORs the keystream into a buffer.
+     * @param buffer The buffer to transform in place.
+     * @param count The number of bytes.
+     */
+    pub func apply_keystream(self: &mut ChaCha20, buffer: *mut u8,
+                             count: usize) -> void {
+        let mut processed := 0;
+        while (processed < count) {
+            if (self.available == 0) {
+                self.generate_block();
+            }
+            let remaining := count - processed;
+            let take := if (remaining < self.available) { remaining } else {
+                self.available
+            };
+            let mut index := 0;
+            while (index < take) {
+                buffer[processed + index] ^=
+                    self.block[self.offset + index];
+                index += 1;
+            }
+            self.offset += take;
+            self.available -= take;
+            processed += take;
+        }
+    }
+
+    /*!
+     * @brief Encrypts a buffer in place.
+     * @param buffer The plaintext, replaced by ciphertext.
+     * @param count The number of bytes.
+     */
+    pub func encrypt(self: &mut ChaCha20, buffer: *mut u8,
+                     count: usize) -> void {
+        self.apply_keystream(buffer, count);
+    }
+
+    /*!
+     * @brief Decrypts a buffer in place.
+     * @param buffer The ciphertext, replaced by plaintext.
+     * @param count The number of bytes.
+     */
+    pub func decrypt(self: &mut ChaCha20, buffer: *mut u8,
+                     count: usize) -> void {
+        self.apply_keystream(buffer, count);
+    }
+
+    /*!
+     * @brief Replaces the block counter.
+     * @param counter The new counter value.
+     */
+    pub func seek(self: &mut ChaCha20, counter: u32) -> void {
+        self.counter = counter;
+        self.available = 0;
+        self.offset = 0;
+    }
+
+    /*!
+     * @brief Returns the current block counter.
+     * @return The counter used for the next block.
+     */
+    pub func block_counter(self: &ChaCha20) -> u32 {
+        return self.counter;
+    }
+}
+
+/*!
+ * @brief Copy a 32-bit little-endian value from a byte pointer.
+ * @param source The source bytes.
+ * @return The decoded value.
+ */
+func load32_le(source: *const u8) -> u32 {
+    return source[0] as u32 |
+           (source[1] as u32) << 8 |
+           (source[2] as u32) << 16 |
+           (source[3] as u32) << 24;
+}
+
+/*!
+ * @brief Operations implemented by an authenticated cipher backend.
+ */
+pub struct AeadVTable {
+    pub seal: *const func(context: *mut void, key: *const u8,
+                          key_length: usize, nonce: *const u8,
+                          nonce_length: usize, plaintext: *const u8,
+                          plaintext_length: usize, associated: *const u8,
+                          associated_length: usize, output: *mut u8,
+                          capacity: usize) -> isize,
+    pub open: *const func(context: *mut void, key: *const u8,
+                          key_length: usize, nonce: *const u8,
+                          nonce_length: usize, ciphertext: *const u8,
+                          ciphertext_length: usize, associated: *const u8,
+                          associated_length: usize, output: *mut u8,
+                          capacity: usize) -> isize,
+}
+
+/*!
+ * @brief A dynamically dispatched authenticated cipher.
+ */
+pub struct Aead {
+    context: *mut void,
+    vtable: *const AeadVTable,
+
+    /*!
+     * @brief Creates an AEAD wrapper from a backend state and vtable.
+     * @param context The backend state.
+     * @param vtable The backend operations.
+     * @return A dynamically dispatched AEAD value.
+     */
+    pub func Aead(context: *mut void, vtable: *const AeadVTable) -> Aead {
+        return Aead { context: context, vtable: vtable };
+    }
+
+    /*!
+     * @brief Returns `true` when no backend is attached.
+     * @return Whether the vtable is null.
+     */
+    pub func(self: &Aead) is_null() -> bool {
+        return self.vtable == null;
+    }
+
+    /*!
+     * @brief Encrypts and authenticates a message.
+     * @param key The secret key bytes.
+     * @param key_length The key length.
+     * @param nonce The nonce bytes.
+     * @param nonce_length The nonce length.
+     * @param plaintext The message to encrypt.
+     * @param plaintext_length The message length.
+     * @param associated Additional authenticated data.
+     * @param associated_length The associated-data length.
+     * @param output The output buffer.
+     * @param capacity The output capacity.
+     * @return The ciphertext length including its tag, or an error.
+     */
+    pub func(self: &Aead) seal(key: *const u8, key_length: usize,
+                               nonce: *const u8, nonce_length: usize,
+                               plaintext: *const u8, plaintext_length: usize,
+                               associated: *const u8,
+                               associated_length: usize, output: *mut u8,
+                               capacity: usize) -> Result<usize, CipherError> {
+        if (self.is_null()) {
+            return Result<usize, CipherError>::Err(
+                CipherError::Unsupported);
+        }
+        let written := self.vtable.seal(
+            self.context, key, key_length, nonce, nonce_length,
+            plaintext, plaintext_length, associated, associated_length,
+            output, capacity);
+        if (written < 0) {
+            return Result<usize, CipherError>::Err(
+                CipherError::AuthenticationFailed);
+        }
+        return Result<usize, CipherError>::Ok(written as usize);
+    }
+
+    /*!
+     * @brief Decrypts and verifies a message.
+     * @param key The secret key bytes.
+     * @param key_length The key length.
+     * @param nonce The nonce bytes.
+     * @param nonce_length The nonce length.
+     * @param ciphertext The encrypted message and tag.
+     * @param ciphertext_length The ciphertext length.
+     * @param associated Additional authenticated data.
+     * @param associated_length The associated-data length.
+     * @param output The output buffer.
+     * @param capacity The output capacity.
+     * @return The plaintext length, or an error.
+     */
+    pub func(self: &Aead) open(key: *const u8, key_length: usize,
+                               nonce: *const u8, nonce_length: usize,
+                               ciphertext: *const u8,
+                               ciphertext_length: usize,
+                               associated: *const u8,
+                               associated_length: usize, output: *mut u8,
+                               capacity: usize) -> Result<usize, CipherError> {
+        if (self.is_null()) {
+            return Result<usize, CipherError>::Err(
+                CipherError::Unsupported);
+        }
+        let written := self.vtable.open(
+            self.context, key, key_length, nonce, nonce_length,
+            ciphertext, ciphertext_length, associated, associated_length,
+            output, capacity);
+        if (written < 0) {
+            return Result<usize, CipherError>::Err(
+                CipherError::AuthenticationFailed);
+        }
+        return Result<usize, CipherError>::Ok(written as usize);
+    }
+}
+
+/*!
+ * @brief Overwrites sensitive storage with zeroes.
+ * @param buffer The storage to clear.
+ * @param count The number of bytes.
+ */
+pub func secure_zero(buffer: *mut u8, count: usize) -> void {
+    let mut index := 0;
+    while (index < count) {
+        buffer[index] = 0;
+        index += 1;
+    }
+}

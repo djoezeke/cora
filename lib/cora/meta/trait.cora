@@ -1,0 +1,350 @@
+/*!
+ * @file trait.cora
+ * @brief Trait descriptions, virtual tables, and trait objects.
+ *
+ * A trait object stores a pointer to a value and a pointer to a `TraitVTable`.
+ * The vtable describes the concrete type and supplies the operations that can
+ * be invoked through the erased value.  This is the same pattern used by the
+ * allocator and I/O layers, with reflection-friendly metadata attached.
+ */
+
+import "core::type";
+
+/*!
+ * @brief A stable identifier for a trait.
+ */
+pub struct TraitId {
+    value: usize,
+
+    /*!
+     * @brief Creates a trait identifier.
+     * @param value The numeric identifier.
+     * @return The identifier.
+     */
+    pub func TraitId(value: usize) -> TraitId {
+        return TraitId { value: value };
+    }
+
+    /*!
+     * @brief Returns the numeric identifier.
+     * @return The identifier value.
+     */
+    pub func(self: &TraitId) raw() -> usize {
+        return self.value;
+    }
+
+    /*!
+     * @brief Compares two trait identifiers.
+     * @param other The identifier to compare against.
+     * @return `true` when both identifiers are equal.
+     */
+    pub func(self: &TraitId) equals(other: TraitId) -> bool {
+        return self.value == other.value;
+    }
+}
+
+/*!
+ * @brief A runtime description of a trait.
+ */
+pub struct TraitInfo {
+    pub id: TraitId,           //!< Stable trait identifier.
+    pub name: *const u8,       //!< Null-terminated trait name.
+    pub size: usize,           //!< Size of the erased value type.
+    pub align: usize,          //!< Alignment of the erased value type.
+    pub method_count: usize,   //!< Number of required methods.
+
+    /*!
+     * @brief Creates a trait description.
+     * @param id The trait identifier.
+     * @param name The trait name.
+     * @param size The concrete value size.
+     * @param align The concrete value alignment.
+     * @param method_count The number of methods.
+     * @return The trait description.
+     */
+    pub func TraitInfo(id: TraitId, name: *const u8, size: usize,
+                       align: usize, method_count: usize) -> TraitInfo {
+        return TraitInfo {
+            id: id,
+            name: name,
+            size: size,
+            align: align,
+            method_count: method_count,
+        };
+    }
+}
+
+/*!
+ * @brief Operations exposed through a trait object.
+ */
+pub struct TraitVTable {
+    pub type_id: usize,       //!< Optional caller-assigned concrete type id.
+    pub type_name: *const u8, //!< Null-terminated concrete type name.
+    pub size: usize,          //!< Size of the concrete type.
+    pub align: usize,         //!< Alignment of the concrete type.
+    pub drop: *const func(data: *mut void) -> void,
+    pub equals: *const func(left: *const void, right: *const void) -> bool,
+    pub hash: *const func(data: *const void) -> u64,
+    pub clone: *const func(source: *const void, destination: *mut void) -> bool,
+}
+
+/*!
+ * @brief A type-erased reference with a vtable.
+ */
+pub struct TraitObject {
+    data: *mut void,
+    vtable: *const TraitVTable,
+
+    /*!
+     * @brief Creates a trait object.
+     * @param data The concrete value.
+     * @param vtable The operations for the value.
+     * @return The trait object.
+     */
+    pub func TraitObject(data: *mut void,
+                         vtable: *const TraitVTable) -> TraitObject {
+        return TraitObject { data: data, vtable: vtable };
+    }
+
+    /*!
+     * @brief Returns `true` when the object has no vtable.
+     * @return Whether the vtable is null.
+     */
+    pub func(self: &TraitObject) is_null() -> bool {
+        return self.vtable == null;
+    }
+
+    /*!
+     * @brief Returns the concrete type name.
+     * @return A null-terminated type name.
+     */
+    pub func(self: &TraitObject) type_name() -> *const u8 {
+        if (self.vtable == null) {
+            return "unknown";
+        }
+        return self.vtable.type_name;
+    }
+
+    /*!
+     * @brief Returns the concrete type size.
+     * @return The size in bytes, or zero for a null object.
+     */
+    pub func(self: &TraitObject) size() -> usize {
+        if (self.vtable == null) {
+            return 0;
+        }
+        return self.vtable.size;
+    }
+
+    /*!
+     * @brief Returns the concrete type alignment.
+     * @return The alignment in bytes, or zero for a null object.
+     */
+    pub func(self: &TraitObject) align() -> usize {
+        if (self.vtable == null) {
+            return 0;
+        }
+        return self.vtable.align;
+    }
+
+    /*!
+     * @brief Tests whether the object has a caller-assigned type id.
+     * @param type_id The identifier to compare against.
+     * @return `true` when the vtable carries the identifier.
+     */
+    pub func(self: &TraitObject) has_type_id(type_id: usize) -> bool {
+        return self.vtable != null && self.vtable.type_id == type_id;
+    }
+
+    /*!
+     * @brief Returns the erased data pointer.
+     * @tparam T The expected value type.
+     * @return The data pointer cast to `T`.
+     *
+     * @warning The caller must verify the concrete type with `has_type_id`
+     *          before dereferencing the returned pointer.
+     */
+    pub func(self: &TraitObject) as_ptr<T>() -> *mut T {
+        return self.data as *mut T;
+    }
+
+    /*!
+     * @brief Compares two trait objects through their vtables.
+     * @param other The object to compare against.
+     * @return `true` when both objects report equality.
+     */
+    pub func(self: &TraitObject) equals(other: TraitObject) -> bool {
+        if (self.vtable == null || self.vtable.equals == null) {
+            return false;
+        }
+        return self.vtable.equals(self.data, other.data);
+    }
+
+    /*!
+     * @brief Computes a hash through the vtable.
+     * @return The hash value, or zero when no hash function is available.
+     */
+    pub func(self: &TraitObject) hash() -> u64 {
+        if (self.vtable == null || self.vtable.hash == null) {
+            return 0;
+        }
+        return self.vtable.hash(self.data);
+    }
+
+    /*!
+     * @brief Clones the erased value into caller-provided storage.
+     * @param destination The destination storage.
+     * @return `true` when a clone function is available and succeeded.
+     */
+    pub func(self: &TraitObject) clone_to(destination: *mut void) -> bool {
+        if (self.vtable == null || self.vtable.clone == null) {
+            return false;
+        }
+        return self.vtable.clone(self.data, destination);
+    }
+
+    /*!
+     * @brief Invokes the vtable destructor.
+     */
+    pub func(self: &mut TraitObject) destroy() -> void {
+        if (self.vtable != null && self.vtable.drop != null) {
+            self.vtable.drop(self.data);
+        }
+        self.data = null;
+        self.vtable = null;
+    }
+}
+
+/*!
+ * @brief A fixed-capacity registry of trait descriptions.
+ */
+pub struct TraitRegistry {
+    entries: *mut TraitInfo,
+    capacity: usize,
+    count: usize,
+
+    /*!
+     * @brief Creates an empty registry over caller storage.
+     * @param entries The trait array.
+     * @param capacity The number of array entries.
+     * @return An empty registry.
+     */
+    pub func TraitRegistry(entries: *mut TraitInfo,
+                           capacity: usize) -> TraitRegistry {
+        return TraitRegistry {
+            entries: entries,
+            capacity: capacity,
+            count: 0,
+        };
+    }
+
+    /*!
+     * @brief Returns the number of registered traits.
+     * @return The current trait count.
+     */
+    pub func(self: &TraitRegistry) count() -> usize {
+        return self.count;
+    }
+
+    /*!
+     * @brief Registers a trait description.
+     * @param info The description to add.
+     * @return `true` on success.
+     */
+    pub func(self: &mut TraitRegistry) add(info: TraitInfo) -> bool {
+        if (self.count >= self.capacity) {
+            return false;
+        }
+        self.entries[self.count] = info;
+        self.count += 1;
+        return true;
+    }
+
+    /*!
+     * @brief Returns a trait description by index.
+     * @param index The entry index.
+     * @return A pointer to the description, or `null`.
+     */
+    pub func(self: &TraitRegistry) at(index: usize) -> *const TraitInfo {
+        if (index >= self.count) {
+            return null;
+        }
+        return &self.entries[index] as *const TraitInfo;
+    }
+
+    /*!
+     * @brief Finds a trait description by name.
+     * @param name The null-terminated trait name.
+     * @return The entry index, or `Option::None`.
+     */
+    pub func(self: &TraitRegistry) find(name: *const u8) -> Option<usize> {
+        let mut index := 0;
+        while (index < self.count) {
+            if (cstr_equals(self.entries[index].name, name)) {
+                return Option<usize>::Some(index);
+            }
+            index += 1;
+        }
+        return Option<usize>::None;
+    }
+}
+
+/*!
+ * @brief Types that expose a null-terminated name.
+ * @tparam T The named type.
+ */
+pub concept Named<T> = requires(value: &T) {
+    { value.name() } -> *const u8;
+};
+
+/*!
+ * @brief Types with an equality operation.
+ * @tparam T The compared type.
+ */
+pub concept Equatable<T> = requires(left: T, right: T) {
+    { left.equals(right) } -> bool;
+};
+
+/*!
+ * @brief Types that can produce a copy of themselves.
+ * @tparam T The cloned type.
+ */
+pub concept Clonable<T> = requires(value: &T) {
+    { value.clone() } -> T;
+};
+
+/*!
+ * @brief Types that can be hashed.
+ * @tparam T The hashed type.
+ */
+pub concept Hashable<T> = requires(value: &T) {
+    { value.hash() } -> u64;
+};
+
+/*!
+ * @brief Mutable iterators that report whether another element is available.
+ * @tparam T The iterator type.
+ */
+pub concept IteratorLike<T> = requires(value: &mut T) {
+    { value.next() } -> bool;
+};
+
+/*!
+ * @brief Compares two null-terminated strings for equality.
+ * @param left The first string.
+ * @param right The second string.
+ * @return `true` when both strings contain the same bytes.
+ */
+func cstr_equals(left: *const u8, right: *const u8) -> bool {
+    if (left == null || right == null) {
+        return left == right;
+    }
+    let mut index := 0;
+    while (left[index] != 0 && right[index] != 0) {
+        if (left[index] != right[index]) {
+            return false;
+        }
+        index += 1;
+    }
+    return left[index] == right[index];
+}

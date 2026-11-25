@@ -1,0 +1,12 @@
+/*!
+ * @file lib.cora
+ * @brief Hosted input/output entry point.
+ *
+ * The I/O layer is intentionally small and allocation-free.  Concrete devices
+ * implement the `Reader` and `Writer` vtables, while `SliceReader`,
+ * `SliceWriter`, and `CountingWriter` cover buffers, parsers, and size
+ * calculations.
+ */
+
+import "cora::io::reader";
+import "cora::io::writer";

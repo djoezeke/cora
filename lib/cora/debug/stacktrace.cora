@@ -1,0 +1,285 @@
+/*!
+ * @file stacktrace.cora
+ * @brief Stack capture, symbolization, and diagnostic printing.
+ *
+ * Capture stores raw return addresses in caller-provided storage.  Resolving a
+ * frame asks the runtime for a symbol, file name, and line number, which keeps
+ * the core library independent of any particular debug-information format.
+ */
+
+import "core::type";
+import "cora::debug::print";
+import "cora::text::format";
+
+/*!
+ * @brief A symbolized stack frame.
+ */
+pub struct StackFrame {
+    pub address: usize,   //!< The instruction address.
+    pub symbol: *const u8,//!< Null-terminated symbol name, or empty.
+    pub file: *const u8,  //!< Null-terminated source file, or empty.
+    pub line: u32,        //!< One-based source line, or zero.
+
+    /*!
+     * @brief Creates a stack frame.
+     * @param address The instruction address.
+     * @param symbol The symbol name.
+     * @param file The source file name.
+     * @param line The source line.
+     * @return The populated frame.
+     */
+    pub func StackFrame(address: usize, symbol: *const u8, file: *const u8,
+                        line: u32) -> StackFrame {
+        return StackFrame {
+            address: address,
+            symbol: symbol,
+            file: file,
+            line: line,
+        };
+    }
+
+    /*!
+     * @brief Returns the instruction address.
+     * @return The raw return address.
+     */
+    pub func(self: &StackFrame) address() -> usize {
+        return self.address;
+    }
+
+    /*!
+     * @brief Returns the symbol name.
+     * @return A null-terminated symbol name.
+     */
+    pub func(self: &StackFrame) symbol() -> *const u8 {
+        return self.symbol;
+    }
+
+    /*!
+     * @brief Returns the source file name.
+     * @return A null-terminated file name.
+     */
+    pub func(self: &StackFrame) file() -> *const u8 {
+        return self.file;
+    }
+
+    /*!
+     * @brief Returns the source line.
+     * @return The one-based line number, or zero when unknown.
+     */
+    pub func(self: &StackFrame) line() -> u32 {
+        return self.line;
+    }
+}
+
+/*!
+ * @brief A stack trace backed by caller-provided address storage.
+ */
+pub struct Stacktrace {
+    addresses: *mut usize,
+    capacity: usize,
+    count: usize,
+
+    /*!
+     * @brief Creates an empty trace over an address array.
+     * @param addresses The address array.
+     * @param capacity The number of available entries.
+     * @return An empty stack trace.
+     */
+    pub func Stacktrace(addresses: *mut usize,
+                        capacity: usize) -> Stacktrace {
+        return Stacktrace {
+            addresses: addresses,
+            capacity: capacity,
+            count: 0,
+        };
+    }
+
+    /*!
+     * @brief Captures the current call stack.
+     * @return The number of captured frames.
+     */
+    pub func(self: &mut Stacktrace) capture() -> usize {
+        self.count = cora_stacktrace_capture(self.addresses, self.capacity);
+        if (self.count > self.capacity) {
+            self.count = self.capacity;
+        }
+        return self.count;
+    }
+
+    /*!
+     * @brief Returns the number of captured frames.
+     * @return The frame count.
+     */
+    pub func(self: &Stacktrace) count() -> usize {
+        return self.count;
+    }
+
+    /*!
+     * @brief Returns `true` when no frames were captured.
+     * @return Whether the trace is empty.
+     */
+    pub func(self: &Stacktrace) is_empty() -> bool {
+        return self.count == 0;
+    }
+
+    /*!
+     * @brief Returns a raw frame address.
+     * @param index The frame index.
+     * @return The address, or zero when out of range.
+     */
+    pub func(self: &Stacktrace) address(index: usize) -> usize {
+        if (index >= self.count) {
+            return 0;
+        }
+        return self.addresses[index];
+    }
+
+    /*!
+     * @brief Resolves a frame into caller-provided buffers.
+     * @param index The frame index.
+     * @param frame The destination frame.
+     * @param symbol_buffer Storage for the symbol name.
+     * @param symbol_capacity The symbol buffer capacity.
+     * @param file_buffer Storage for the source file name.
+     * @param file_capacity The file buffer capacity.
+     * @return `true` when the index was valid.
+     */
+    pub func(self: &Stacktrace) resolve(index: usize,
+                                        frame: *mut StackFrame,
+                                        symbol_buffer: *mut u8,
+                                        symbol_capacity: usize,
+                                        file_buffer: *mut u8,
+                                        file_capacity: usize) -> bool {
+        if (index >= self.count || frame == null) {
+            return false;
+        }
+        let address := self.addresses[index];
+        let symbol_length := symbol_at(address, symbol_buffer,
+                                       symbol_capacity);
+        let file_length := file_at(address, file_buffer, file_capacity);
+        let line := line_at(address);
+        *frame = StackFrame(address, symbol_buffer, file_buffer, line);
+        return true;
+    }
+
+    /*!
+     * @brief Prints every resolved frame to standard error.
+     */
+    pub func(self: &Stacktrace) print() -> void {
+        let mut symbol_buffer: u8[256] = [0; 256];
+        let mut file_buffer: u8[256] = [0; 256];
+        let mut index := 0;
+        while (index < self.count) {
+            let mut frame := StackFrame(0, "", "", 0);
+            self.resolve(index, &mut frame as *mut StackFrame,
+                         &mut symbol_buffer[0] as *mut u8, 256,
+                         &mut file_buffer[0] as *mut u8, 256);
+            print_frame(index, &frame as *const StackFrame);
+            index += 1;
+        }
+    }
+}
+
+/*!
+ * @brief Captures the current stack into caller storage.
+ * @param addresses The address array to fill.
+ * @param capacity The number of available entries.
+ * @return The number of captured frames.
+ */
+pub func capture_current(addresses: *mut usize, capacity: usize) -> usize {
+    return cora_stacktrace_capture(addresses, capacity);
+}
+
+/*!
+ * @brief Resolves the symbol name for an address.
+ * @param address The instruction address.
+ * @param buffer The output buffer.
+ * @param capacity The output capacity.
+ * @return The number of characters written.
+ */
+pub func symbol_at(address: usize, buffer: *mut u8,
+                   capacity: usize) -> usize {
+    if (buffer == null || capacity == 0) {
+        return 0;
+    }
+    let written := cora_stacktrace_symbol(address, buffer, capacity);
+    if (written < 0) {
+        return 0;
+    }
+    return written as usize;
+}
+
+/*!
+ * @brief Resolves the source file name for an address.
+ * @param address The instruction address.
+ * @param buffer The output buffer.
+ * @param capacity The output capacity.
+ * @return The number of characters written.
+ */
+pub func file_at(address: usize, buffer: *mut u8,
+                 capacity: usize) -> usize {
+    if (buffer == null || capacity == 0) {
+        return 0;
+    }
+    let written := cora_stacktrace_file(address, buffer, capacity);
+    if (written < 0) {
+        return 0;
+    }
+    return written as usize;
+}
+
+/*!
+ * @brief Resolves the source line for an address.
+ * @param address The instruction address.
+ * @return The one-based line number, or zero when unknown.
+ */
+pub func line_at(address: usize) -> u32 {
+    return cora_stacktrace_line(address);
+}
+
+/*!
+ * @brief Captures and prints the current call stack.
+ */
+pub func backtrace() -> void {
+    let mut addresses: usize[64] = [0; 64];
+    let mut trace := Stacktrace(&mut addresses[0] as *mut usize, 64);
+    trace.capture();
+    trace.print();
+}
+
+/*!
+ * @brief Prints a symbolized frame.
+ * @param index The frame index.
+ * @param frame The frame to print.
+ */
+func print_frame(index: usize, frame: *const StackFrame) -> void {
+    let mut buffer: u8[512] = [0; 512];
+    let mut formatter := Formatter(&mut buffer[0] as *mut u8, 512);
+    formatter.write_byte('#');
+    formatter.write_u64(index as u64);
+    formatter.write_cstr(" 0x");
+    formatter.write_u64_base(frame.address as u64, 16, false);
+    formatter.write_cstr(" ");
+    formatter.write_cstr(frame.symbol);
+    formatter.write_cstr(" (");
+    formatter.write_cstr(frame.file);
+    formatter.write_byte(':');
+    formatter.write_u64(frame.line as u64);
+    formatter.write_cstr(")\n");
+    write(StdStream::Stderr, &buffer[0] as *const u8, formatter.len());
+}
+
+[[link_name("cora_stacktrace_capture")]]
+extern "C" func cora_stacktrace_capture(addresses: *mut usize,
+                                         capacity: usize) -> usize;
+
+[[link_name("cora_stacktrace_symbol")]]
+extern "C" func cora_stacktrace_symbol(address: usize, buffer: *mut u8,
+                                        capacity: usize) -> isize;
+
+[[link_name("cora_stacktrace_file")]]
+extern "C" func cora_stacktrace_file(address: usize, buffer: *mut u8,
+                                      capacity: usize) -> isize;
+
+[[link_name("cora_stacktrace_line")]]
+extern "C" func cora_stacktrace_line(address: usize) -> u32;

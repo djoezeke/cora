@@ -1,0 +1,399 @@
+/*!
+ * @file writer.cora
+ * @brief Byte-oriented output interfaces and in-memory writers.
+ *
+ * `Writer` erases a concrete byte sink behind a context pointer and a vtable.
+ * `SliceWriter` writes into caller-owned storage and `CountingWriter` measures
+ * how many bytes a producer would emit without storing them.
+ */
+
+import "core::type";
+import "cora::io::reader";
+import "cora::text::format";
+
+/*!
+ * @brief Operations implemented by a byte sink.
+ */
+pub struct WriterVTable {
+    pub write: *const func(context: *mut void, source: *const u8,
+                           count: usize) -> isize,
+    pub flush: *const func(context: *mut void) -> isize,
+    pub seek: *const func(context: *mut void, offset: i64,
+                          origin: i32) -> i64,
+}
+
+/*!
+ * @brief A dynamically dispatched byte writer.
+ */
+pub struct Writer {
+    context: *mut void,
+    vtable: *const WriterVTable,
+
+    /*!
+     * @brief Creates a writer from a state pointer and vtable.
+     * @param context The concrete writer state.
+     * @param vtable The writer operations.
+     * @return A dynamically dispatched writer.
+     */
+    pub func Writer(context: *mut void,
+                    vtable: *const WriterVTable) -> Writer {
+        return Writer { context: context, vtable: vtable };
+    }
+
+    /*!
+     * @brief Returns `true` when no writer is attached.
+     * @return Whether the vtable is null.
+     */
+    pub func(self: &Writer) is_null() -> bool {
+        return self.vtable == null;
+    }
+
+    /*!
+     * @brief Writes up to `count` bytes.
+     * @param source The bytes to write.
+     * @param count The number of bytes.
+     * @return The number of bytes accepted, or an error.
+     */
+    pub func(self: &Writer) write(source: *const u8,
+                                  count: usize) -> Result<usize, IoError> {
+        if (self.is_null()) {
+            return Result<usize, IoError>::Err(IoError::Unsupported);
+        }
+        if (count == 0) {
+            return Result<usize, IoError>::Ok(0);
+        }
+        let written := self.vtable.write(self.context, source, count);
+        if (written < 0) {
+            return Result<usize, IoError>::Err(IoError::Other);
+        }
+        return Result<usize, IoError>::Ok(written as usize);
+    }
+
+    /*!
+     * @brief Writes every byte or reports an error.
+     * @param source The bytes to write.
+     * @param count The number of bytes.
+     * @return The number of bytes written, or an error.
+     */
+    pub func(self: &Writer) write_all(source: *const u8,
+                                      count: usize) -> Result<usize,
+                                                            IoError> {
+        let mut total := 0;
+        while (total < count) {
+            let result := self.write(source + total, count - total);
+            if (is_err(result)) {
+                return Result<usize, IoError>::Err(IoError::Other);
+            }
+            let written := result_or(result, 0);
+            if (written == 0) {
+                return Result<usize, IoError>::Err(IoError::WriteZero);
+            }
+            total += written;
+        }
+        return Result<usize, IoError>::Ok(total);
+    }
+
+    /*!
+     * @brief Writes a single byte.
+     * @param value The byte to write.
+     * @return `Result::Ok(1)`, or an error.
+     */
+    pub func(self: &Writer) write_byte(value: u8) -> Result<usize, IoError> {
+        return self.write_all(&value as *const u8, 1);
+    }
+
+    /*!
+     * @brief Writes a null-terminated string.
+     * @param text The string to write.
+     * @return The number of bytes written, or an error.
+     */
+    pub func(self: &Writer) write_cstr(text: *const u8) -> Result<usize,
+                                                                 IoError> {
+        if (text == null) {
+            return Result<usize, IoError>::Ok(0);
+        }
+        let mut length := 0;
+        while (text[length] != 0) {
+            length += 1;
+        }
+        return self.write_all(text, length);
+    }
+
+    /*!
+     * @brief Flushes buffered output.
+     * @return The number of pending bytes flushed, or an error.
+     */
+    pub func(self: &Writer) flush() -> Result<usize, IoError> {
+        if (self.is_null() || self.vtable.flush == null) {
+            return Result<usize, IoError>::Ok(0);
+        }
+        let flushed := self.vtable.flush(self.context);
+        if (flushed < 0) {
+            return Result<usize, IoError>::Err(IoError::Other);
+        }
+        return Result<usize, IoError>::Ok(flushed as usize);
+    }
+
+    /*!
+     * @brief Moves the write position.
+     * @param request The seek request.
+     * @return The new absolute position, or an error.
+     */
+    pub func(self: &Writer) seek(request: SeekFrom) -> Result<i64, IoError> {
+        if (self.is_null() || self.vtable.seek == null) {
+            return Result<i64, IoError>::Err(IoError::Unsupported);
+        }
+        let position := self.vtable.seek(self.context, request.offset,
+                                          request.origin as i32);
+        if (position < 0) {
+            return Result<i64, IoError>::Err(IoError::Other);
+        }
+        return Result<i64, IoError>::Ok(position);
+    }
+
+    /*!
+     * @brief Writes an unsigned integer in a given base.
+     * @param value The value to write.
+     * @param base The radix, between 2 and 36.
+     * @param uppercase Whether alphabetic digits are uppercase.
+     * @return The number of bytes written, or an error.
+     */
+    pub func(self: &Writer) write_u64(value: u64, base: u32,
+                                      uppercase: bool) -> Result<usize,
+                                                                   IoError> {
+        let mut buffer: u8[64] = [0; 64];
+        let mut formatter := Formatter(&mut buffer[0] as *mut u8, 64);
+        let written := formatter.write_u64_base(value, base, uppercase);
+        return self.write_all(&buffer[0] as *const u8, written);
+    }
+
+    /*!
+     * @brief Writes a signed integer in decimal.
+     * @param value The value to write.
+     * @return The number of bytes written, or an error.
+     */
+    pub func(self: &Writer) write_i64(value: i64) -> Result<usize, IoError> {
+        let mut buffer: u8[32] = [0; 32];
+        let mut formatter := Formatter(&mut buffer[0] as *mut u8, 32);
+        let written := formatter.write_i64(value);
+        return self.write_all(&buffer[0] as *const u8, written);
+    }
+
+    /*!
+     * @brief Writes a floating-point value.
+     * @param value The value to write.
+     * @param precision The number of fractional digits.
+     * @return The number of bytes written, or an error.
+     */
+    pub func(self: &Writer) write_f64(value: f64,
+                                      precision: usize) -> Result<usize,
+                                                                  IoError> {
+        let mut buffer: u8[64] = [0; 64];
+        let mut formatter := Formatter(&mut buffer[0] as *mut u8, 64);
+        let written := formatter.write_f64(value, precision);
+        return self.write_all(&buffer[0] as *const u8, written);
+    }
+
+    /*!
+     * @brief Writes a boolean.
+     * @param value The value to write.
+     * @return The number of bytes written, or an error.
+     */
+    pub func(self: &Writer) write_bool(value: bool) -> Result<usize,
+                                                               IoError> {
+        let mut buffer: u8[8] = [0; 8];
+        let mut formatter := Formatter(&mut buffer[0] as *mut u8, 8);
+        let written := formatter.write_bool(value);
+        return self.write_all(&buffer[0] as *const u8, written);
+    }
+}
+
+/*!
+ * @brief A writer over caller-provided mutable storage.
+ */
+pub struct SliceWriter {
+    data: *mut u8,
+    capacity: usize,
+    position: usize,
+
+    /*!
+     * @brief Creates a writer over a mutable byte slice.
+     * @param data The destination bytes.
+     * @param capacity The destination capacity.
+     * @return A writer positioned at the first byte.
+     */
+    pub func SliceWriter(data: *mut u8, capacity: usize) -> SliceWriter {
+        return SliceWriter {
+            data: data,
+            capacity: capacity,
+            position: 0,
+        };
+    }
+
+    /*!
+     * @brief Copies bytes into the slice.
+     * @param source The source bytes.
+     * @param count The number of bytes.
+     * @return The number of bytes copied.
+     */
+    pub func(self: &mut SliceWriter) write(source: *const u8,
+                                           count: usize) -> usize {
+        let available := self.capacity - self.position;
+        let amount := if (count < available) { count } else { available };
+        let mut index := 0;
+        while (index < amount) {
+            self.data[self.position + index] = source[index];
+            index += 1;
+        }
+        self.position += amount;
+        return amount;
+    }
+
+    /*!
+     * @brief Flushes the slice writer.
+     * @return Zero.
+     */
+    pub func(self: &mut SliceWriter) flush() -> isize {
+        return 0;
+    }
+
+    /*!
+     * @brief Moves the write position.
+     * @param request The seek request.
+     * @return The new position, or a negative value on failure.
+     */
+    pub func(self: &mut SliceWriter) seek(request: SeekFrom) -> i64 {
+        let mut target: i64 = 0;
+        if (request.origin == SeekOrigin::Start) {
+            target = request.offset;
+        } else if (request.origin == SeekOrigin::Current) {
+            target = self.position as i64 + request.offset;
+        } else {
+            target = self.capacity as i64 + request.offset;
+        }
+        if (target < 0 || target > self.capacity as i64) {
+            return -1;
+        }
+        self.position = target as usize;
+        return target;
+    }
+
+    /*!
+     * @brief Returns the current position.
+     * @return The byte offset from the slice start.
+     */
+    pub func(self: &SliceWriter) position() -> usize {
+        return self.position;
+    }
+
+    /*!
+     * @brief Returns the number of bytes still available.
+     * @return The remaining slice capacity.
+     */
+    pub func(self: &SliceWriter) remaining() -> usize {
+        return self.capacity - self.position;
+    }
+
+    /*!
+     * @brief Erases this writer into the dynamic `Writer` interface.
+     * @return A dynamic writer backed by this slice.
+     */
+    pub func(self: *SliceWriter) as_writer() -> Writer {
+        return Writer(self as *mut void,
+                      &SLICE_WRITER_VTABLE as *const WriterVTable);
+    }
+}
+
+/*!
+ * @brief A writer that counts bytes without storing them.
+ */
+pub struct CountingWriter {
+    written: usize,
+
+    /*!
+     * @brief Creates a counting writer.
+     * @return A writer with a zero count.
+     */
+    pub func CountingWriter() -> CountingWriter {
+        return CountingWriter { written: 0 };
+    }
+
+    /*!
+     * @brief Counts a byte range.
+     * @param source The bytes that would be written.
+     * @param count The number of bytes.
+     * @return The number of bytes counted.
+     */
+    pub func(self: &mut CountingWriter) write(source: *const u8,
+                                              count: usize) -> usize {
+        self.written += count;
+        return count;
+    }
+
+    /*!
+     * @brief Returns the number of counted bytes.
+     * @return The running total.
+     */
+    pub func(self: &CountingWriter) count() -> usize {
+        return self.written;
+    }
+
+    /*!
+     * @brief Resets the running total.
+     */
+    pub func(self: &mut CountingWriter) reset() -> void {
+        self.written = 0;
+    }
+
+    /*!
+     * @brief Erases this writer into the dynamic `Writer` interface.
+     * @return A dynamic writer backed by this counter.
+     */
+    pub func(self: *CountingWriter) as_writer() -> Writer {
+        return Writer(self as *mut void,
+                      &COUNTING_WRITER_VTABLE as *const WriterVTable);
+    }
+}
+
+const SLICE_WRITER_VTABLE: WriterVTable = WriterVTable {
+    write: slice_writer_write,
+    flush: slice_writer_flush,
+    seek: slice_writer_seek,
+};
+
+const COUNTING_WRITER_VTABLE: WriterVTable = WriterVTable {
+    write: counting_writer_write,
+    flush: counting_writer_flush,
+    seek: counting_writer_seek,
+};
+
+func slice_writer_write(context: *mut void, source: *const u8,
+                        count: usize) -> isize {
+    let writer := context as *mut SliceWriter;
+    return writer.write(source, count) as isize;
+}
+
+func slice_writer_flush(context: *mut void) -> isize {
+    return 0;
+}
+
+func slice_writer_seek(context: *mut void, offset: i64,
+                       origin: i32) -> i64 {
+    let writer := context as *mut SliceWriter;
+    return writer.seek(SeekFrom(origin as SeekOrigin, offset));
+}
+
+func counting_writer_write(context: *mut void, source: *const u8,
+                           count: usize) -> isize {
+    let writer := context as *mut CountingWriter;
+    return writer.write(source, count) as isize;
+}
+
+func counting_writer_flush(context: *mut void) -> isize {
+    return 0;
+}
+
+func counting_writer_seek(context: *mut void, offset: i64,
+                          origin: i32) -> i64 {
+    return -1;
+}

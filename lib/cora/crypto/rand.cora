@@ -1,0 +1,281 @@
+/*!
+ * @file rand.cora
+ * @brief Cryptographically secure random numbers.
+ *
+ * Platform entropy is obtained through the `cora_crypto_entropy` runtime hook.
+ * `SecureRandom` expands a seed into a ChaCha20 keystream and is suitable for
+ * keys, nonces, salts, and protocol tokens.  For simulations use
+ * `cora::num::random` instead.
+ */
+
+import "core::type";
+import "cora::crypto::cipher";
+
+/*!
+ * @brief Reasons an entropy request may fail.
+ */
+pub enum EntropyError {
+    Unavailable,  //!< The platform entropy source is not available.
+    ShortRead,    //!< The source returned fewer bytes than requested.
+    InvalidSeed,  //!< The supplied seed is too short.
+}
+
+/*!
+ * @brief Fills a buffer from the platform entropy source.
+ * @param buffer The destination buffer.
+ * @param count The number of bytes requested.
+ * @return The number of bytes written, or an error.
+ */
+pub func entropy_fill(buffer: *mut u8,
+                      count: usize) -> Result<usize, EntropyError> {
+    if (count == 0) {
+        return Result<usize, EntropyError>::Ok(0);
+    }
+    let written := cora_crypto_entropy(buffer, count);
+    if (written < 0) {
+        return Result<usize, EntropyError>::Err(
+            EntropyError::Unavailable);
+    }
+    if (written as usize != count) {
+        return Result<usize, EntropyError>::Err(EntropyError::ShortRead);
+    }
+    return Result<usize, EntropyError>::Ok(count);
+}
+
+/*!
+ * @brief Returns a 64-bit value from the platform entropy source.
+ * @return A random 64-bit value, or zero when entropy is unavailable.
+ */
+pub func entropy_u64() -> u64 {
+    let mut bytes: u8[8] = [0; 8];
+    let result := entropy_fill(&mut bytes[0] as *mut u8, 8);
+    if (is_err(result)) {
+        return 0;
+    }
+    let mut value: u64 = 0;
+    let mut index := 0;
+    while (index < 8) {
+        value = (value << 8) | bytes[index] as u64;
+        index += 1;
+    }
+    return value;
+}
+
+/*!
+ * @brief Returns a random value in `[0, bound)` from platform entropy.
+ * @param bound The exclusive upper bound; zero returns zero.
+ * @return The bounded random value.
+ */
+pub func entropy_bounded(bound: u64) -> u64 {
+    if (bound == 0) {
+        return 0;
+    }
+    let threshold := ((~bound) + 1) % bound;
+    while (true) {
+        let value := entropy_u64();
+        if (value >= threshold) {
+            return value % bound;
+        }
+    }
+}
+
+/*!
+ * @brief Fills a buffer with random bytes from a private ChaCha20 stream.
+ *
+ * The generator is seeded from the platform entropy source.  Callers that
+ * need a long-lived generator should use `SecureRandom` directly.
+ *
+ * @param buffer The destination buffer.
+ * @param count The number of bytes requested.
+ * @return The number of bytes written, or an error.
+ */
+pub func random_fill(buffer: *mut u8,
+                     count: usize) -> Result<usize, EntropyError> {
+    let generator := SecureRandom::from_entropy();
+    return match (generator) {
+        Result<SecureRandom, EntropyError>::Ok(value) => {
+            let mut source := value;
+            source.fill_bytes(buffer, count);
+            Result<usize, EntropyError>::Ok(count)
+        },
+        Result<SecureRandom, EntropyError>::Err(error) => {
+            Result<usize, EntropyError>::Err(error)
+        },
+    };
+}
+
+/*!
+ * @brief A seeded cryptographic random generator.
+ */
+pub struct SecureRandom {
+    stream: ChaCha20,
+    block: u8[64],
+    available: usize,
+    offset: usize,
+
+    /*!
+     * @brief Creates a generator from a 44-byte seed.
+     * @param seed The seed bytes; the first 32 bytes key the cipher and the
+     *             next 12 bytes form the nonce.
+     * @param length The seed length; must be at least 44.
+     * @return The generator, or an error for a short seed.
+     */
+    pub func from_seed(seed: *const u8,
+                       length: usize) -> Result<SecureRandom,
+                                            EntropyError> {
+        if (length < 44) {
+            return Result<SecureRandom, EntropyError>::Err(
+                EntropyError::InvalidSeed);
+        }
+        return Result<SecureRandom, EntropyError>::Ok(SecureRandom {
+            stream: ChaCha20(seed, seed + 32),
+            block: [0; 64],
+            available: 0,
+            offset: 0,
+        });
+    }
+
+    /*!
+     * @brief Creates a generator seeded from platform entropy.
+     * @return A freshly seeded generator, or an error.
+     */
+    pub func from_entropy() -> Result<SecureRandom, EntropyError> {
+        let mut seed: u8[44] = [0; 44];
+        let result := entropy_fill(&mut seed[0] as *mut u8, 44);
+        return match (result) {
+            Result<usize, EntropyError>::Ok(_) => {
+                SecureRandom::from_seed(&seed[0] as *const u8, 44)
+            },
+            Result<usize, EntropyError>::Err(error) => {
+                Result<SecureRandom, EntropyError>::Err(error)
+            },
+        };
+    }
+
+    /*!
+     * @brief Refills the internal keystream block.
+     */
+    func refill(self: &mut SecureRandom) -> void {
+        let mut zero: u8[64] = [0; 64];
+        self.stream.apply_keystream(&mut zero[0] as *mut u8, 64);
+        let mut index := 0;
+        while (index < 64) {
+            self.block[index] = zero[index];
+            index += 1;
+        }
+        self.available = 64;
+        self.offset = 0;
+    }
+
+    /*!
+     * @brief Fills a buffer with random bytes.
+     * @param buffer The destination buffer.
+     * @param count The number of bytes to write.
+     */
+    pub func fill_bytes(self: &mut SecureRandom, buffer: *mut u8,
+                        count: usize) -> void {
+        let mut written := 0;
+        while (written < count) {
+            if (self.available == 0) {
+                self.refill();
+            }
+            let remaining := count - written;
+            let take := if (remaining < self.available) { remaining } else {
+                self.available
+            };
+            let mut index := 0;
+            while (index < take) {
+                buffer[written + index] = self.block[self.offset + index];
+                index += 1;
+            }
+            self.written(take);
+            written += take;
+        }
+    }
+
+    /*!
+     * @brief Advances the internal block position.
+     * @param count The number of consumed bytes.
+     */
+    func written(self: &mut SecureRandom, count: usize) -> void {
+        self.offset += count;
+        self.available -= count;
+    }
+
+    /*!
+     * @brief Returns a random 32-bit value.
+     * @return A uniformly distributed value.
+     */
+    pub func next_u32(self: &mut SecureRandom) -> u32 {
+        let mut bytes: u8[4] = [0; 4];
+        self.fill_bytes(&mut bytes[0] as *mut u8, 4);
+        return bytes[0] as u32 |
+               (bytes[1] as u32) << 8 |
+               (bytes[2] as u32) << 16 |
+               (bytes[3] as u32) << 24;
+    }
+
+    /*!
+     * @brief Returns a random 64-bit value.
+     * @return A uniformly distributed value.
+     */
+    pub func next_u64(self: &mut SecureRandom) -> u64 {
+        let mut bytes: u8[8] = [0; 8];
+        self.fill_bytes(&mut bytes[0] as *mut u8, 8);
+        let mut value: u64 = 0;
+        let mut index := 0;
+        while (index < 8) {
+            value = (value << 8) | bytes[index] as u64;
+            index += 1;
+        }
+        return value;
+    }
+
+    /*!
+     * @brief Returns a random value in `[0, bound)`.
+     * @param bound The exclusive upper bound; zero returns zero.
+     * @return A bounded random value.
+     */
+    pub func next_bounded(self: &mut SecureRandom, bound: u64) -> u64 {
+        if (bound == 0) {
+            return 0;
+        }
+        let threshold := ((~bound) + 1) % bound;
+        while (true) {
+            let value := self.next_u64();
+            if (value >= threshold) {
+                return value % bound;
+            }
+        }
+    }
+
+    /*!
+     * @brief Returns a random value in `[0.0, 1.0)`.
+     * @return A double-precision random value.
+     */
+    pub func next_f64(self: &mut SecureRandom) -> f64 {
+        return (self.next_u64() >> 11) as f64 *
+               (1.0 / 9007199254740992.0);
+    }
+
+    /*!
+     * @brief Replaces the generator state with fresh entropy.
+     * @return `Result::Ok` on success, or an error.
+     */
+    pub func reseed(self: &mut SecureRandom) -> Result<void, EntropyError> {
+        let replacement := SecureRandom::from_entropy();
+        return match (replacement) {
+            Result<SecureRandom, EntropyError>::Ok(value) => {
+                *self = value;
+                Result<void, EntropyError>::Ok(null)
+            },
+            Result<SecureRandom, EntropyError>::Err(error) => {
+                Result<void, EntropyError>::Err(error)
+            },
+        };
+    }
+}
+
+[[link_name("cora_crypto_entropy")]]
+extern "C" func cora_crypto_entropy(buffer: *mut u8,
+                                     count: usize) -> isize;

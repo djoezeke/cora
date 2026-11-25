@@ -1,0 +1,343 @@
+/*!
+ * @file reader.cora
+ * @brief Byte-oriented input interfaces and in-memory readers.
+ *
+ * The `Reader` type erases a concrete byte source behind a context pointer and
+ * a vtable.  `SliceReader` is the simplest implementation and is useful for
+ * parsers and tests.  All operations report failures with `IoError`; a
+ * successful read of zero bytes represents end of file.
+ */
+
+import "core::type";
+
+/*!
+ * @brief Portable input/output error classifications.
+ */
+pub enum IoError {
+    EndOfFile,    //!< No more data is available.
+    WouldBlock,   //!< The operation would block.
+    Interrupted,  //!< The operation was interrupted by a signal.
+    InvalidInput, //!< The supplied data or arguments are invalid.
+    NotConnected, //!< The underlying channel is closed.
+    BrokenPipe,   //!< The peer has stopped reading or writing.
+    TimedOut,     //!< The operation exceeded its deadline.
+    WriteZero,    //!< A write made no progress.
+    Unsupported,  //!< The operation is unavailable on this reader.
+    OutOfMemory,  //!< Insufficient storage for the operation.
+    Other,        //!< An unclassified platform error.
+}
+
+/*!
+ * @brief The reference point for a seek operation.
+ */
+pub enum SeekOrigin : i32 {
+    Start = 0,   //!< Offset from the beginning of the stream.
+    Current = 1, //!< Offset from the current position.
+    End = 2,     //!< Offset from the end of the stream.
+}
+
+/*!
+ * @brief A signed seek request.
+ */
+pub struct SeekFrom {
+    pub origin: SeekOrigin,  //!< The reference point.
+    pub offset: i64,         //!< The signed byte offset.
+
+    /*!
+     * @brief Creates a seek request.
+     * @param origin The reference point.
+     * @param offset The signed byte offset.
+     * @return The seek request.
+     */
+    pub func SeekFrom(origin: SeekOrigin, offset: i64) -> SeekFrom {
+        return SeekFrom { origin: origin, offset: offset };
+    }
+
+    /*!
+     * @brief Creates a seek relative to the stream start.
+     * @param offset The non-negative byte offset.
+     * @return The seek request.
+     */
+    pub func from_start(offset: i64) -> SeekFrom {
+        return SeekFrom {
+            origin: SeekOrigin::Start,
+            offset: offset,
+        };
+    }
+
+    /*!
+     * @brief Creates a seek relative to the current position.
+     * @param offset The signed byte offset.
+     * @return The seek request.
+     */
+    pub func from_current(offset: i64) -> SeekFrom {
+        return SeekFrom {
+            origin: SeekOrigin::Current,
+            offset: offset,
+        };
+    }
+
+    /*!
+     * @brief Creates a seek relative to the stream end.
+     * @param offset The signed byte offset.
+     * @return The seek request.
+     */
+    pub func from_end(offset: i64) -> SeekFrom {
+        return SeekFrom {
+            origin: SeekOrigin::End,
+            offset: offset,
+        };
+    }
+}
+
+/*!
+ * @brief Operations implemented by a byte source.
+ */
+pub struct ReaderVTable {
+    pub read: *const func(context: *mut void, buffer: *mut u8,
+                          count: usize) -> isize,
+    pub seek: *const func(context: *mut void, offset: i64,
+                          origin: i32) -> i64,
+}
+
+/*!
+ * @brief A dynamically dispatched byte reader.
+ */
+pub struct Reader {
+    context: *mut void,
+    vtable: *const ReaderVTable,
+
+    /*!
+     * @brief Creates a reader from a state pointer and vtable.
+     * @param context The concrete reader state.
+     * @param vtable The reader operations.
+     * @return A dynamically dispatched reader.
+     */
+    pub func Reader(context: *mut void,
+                    vtable: *const ReaderVTable) -> Reader {
+        return Reader { context: context, vtable: vtable };
+    }
+
+    /*!
+     * @brief Returns `true` when no reader is attached.
+     * @return Whether the vtable is null.
+     */
+    pub func(self: &Reader) is_null() -> bool {
+        return self.vtable == null;
+    }
+
+    /*!
+     * @brief Reads up to `count` bytes.
+     * @param buffer The destination buffer.
+     * @param count The maximum number of bytes to read.
+     * @return The number of bytes read, or an error.
+     */
+    pub func(self: &Reader) read(buffer: *mut u8,
+                                 count: usize) -> Result<usize, IoError> {
+        if (self.is_null()) {
+            return Result<usize, IoError>::Err(IoError::Unsupported);
+        }
+        if (count == 0) {
+            return Result<usize, IoError>::Ok(0);
+        }
+        let written := self.vtable.read(self.context, buffer, count);
+        if (written < 0) {
+            return Result<usize, IoError>::Err(IoError::Other);
+        }
+        return Result<usize, IoError>::Ok(written as usize);
+    }
+
+    /*!
+     * @brief Reads exactly `count` bytes or reports an error.
+     * @param buffer The destination buffer.
+     * @param count The number of bytes required.
+     * @return The number of bytes read, or an error.
+     */
+    pub func(self: &Reader) read_exact(buffer: *mut u8,
+                                       count: usize) -> Result<usize,
+                                                             IoError> {
+        let mut total := 0;
+        while (total < count) {
+            let result := self.read(buffer + total, count - total);
+            if (is_err(result)) {
+                return Result<usize, IoError>::Err(IoError::Other);
+            }
+            let written := result_or(result, 0);
+            if (written == 0) {
+                return Result<usize, IoError>::Err(IoError::EndOfFile);
+            }
+            total += written;
+        }
+        return Result<usize, IoError>::Ok(total);
+    }
+
+    /*!
+     * @brief Reads one byte.
+     * @return The byte, or `IoError::EndOfFile` when exhausted.
+     */
+    pub func(self: &Reader) read_byte() -> Result<u8, IoError> {
+        let mut byte: u8 = 0;
+        let result := self.read(&mut byte as *mut u8, 1);
+        if (is_err(result)) {
+            return Result<u8, IoError>::Err(IoError::Other);
+        }
+        if (result_or(result, 0) == 0) {
+            return Result<u8, IoError>::Err(IoError::EndOfFile);
+        }
+        return Result<u8, IoError>::Ok(byte);
+    }
+
+    /*!
+     * @brief Discards up to `count` bytes.
+     * @param count The maximum number of bytes to skip.
+     * @return The number of bytes skipped, or an error.
+     */
+    pub func(self: &Reader) skip(count: usize) -> Result<usize, IoError> {
+        let mut buffer: u8[128] = [0; 128];
+        let mut total := 0;
+        while (total < count) {
+            let remaining := count - total;
+            let request := if (remaining < 128) { remaining } else { 128 };
+            let result := self.read(&mut buffer[0] as *mut u8, request);
+            if (is_err(result)) {
+                return Result<usize, IoError>::Err(IoError::Other);
+            }
+            let read := result_or(result, 0);
+            if (read == 0) {
+                break;
+            }
+            total += read;
+        }
+        return Result<usize, IoError>::Ok(total);
+    }
+
+    /*!
+     * @brief Moves the read position.
+     * @param request The seek request.
+     * @return The new absolute position, or an error.
+     */
+    pub func(self: &Reader) seek(request: SeekFrom) -> Result<i64, IoError> {
+        if (self.is_null() || self.vtable.seek == null) {
+            return Result<i64, IoError>::Err(IoError::Unsupported);
+        }
+        let position := self.vtable.seek(self.context, request.offset,
+                                          request.origin as i32);
+        if (position < 0) {
+            return Result<i64, IoError>::Err(IoError::Other);
+        }
+        return Result<i64, IoError>::Ok(position);
+    }
+}
+
+/*!
+ * @brief A reader over a contiguous byte slice.
+ */
+pub struct SliceReader {
+    data: *const u8,
+    length: usize,
+    position: usize,
+
+    /*!
+     * @brief Creates a reader over a byte slice.
+     * @param data The source bytes.
+     * @param length The source length.
+     * @return A reader positioned at the first byte.
+     */
+    pub func SliceReader(data: *const u8, length: usize) -> SliceReader {
+        return SliceReader {
+            data: data,
+            length: length,
+            position: 0,
+        };
+    }
+
+    /*!
+     * @brief Copies bytes from the slice.
+     * @param buffer The destination buffer.
+     * @param count The maximum number of bytes.
+     * @return The number of bytes copied.
+     */
+    pub func(self: &mut SliceReader) read(buffer: *mut u8,
+                                          count: usize) -> usize {
+        let available := self.length - self.position;
+        let amount := if (count < available) { count } else { available };
+        let mut index := 0;
+        while (index < amount) {
+            buffer[index] = self.data[self.position + index];
+            index += 1;
+        }
+        self.position += amount;
+        return amount;
+    }
+
+    /*!
+     * @brief Moves the reader position.
+     * @param request The seek request.
+     * @return The new position, or a negative value on failure.
+     */
+    pub func(self: &mut SliceReader) seek(request: SeekFrom) -> i64 {
+        let mut target: i64 = 0;
+        if (request.origin == SeekOrigin::Start) {
+            target = request.offset;
+        } else if (request.origin == SeekOrigin::Current) {
+            target = self.position as i64 + request.offset;
+        } else {
+            target = self.length as i64 + request.offset;
+        }
+        if (target < 0 || target > self.length as i64) {
+            return -1;
+        }
+        self.position = target as usize;
+        return target;
+    }
+
+    /*!
+     * @brief Returns the current position.
+     * @return The byte offset from the slice start.
+     */
+    pub func(self: &SliceReader) position() -> usize {
+        return self.position;
+    }
+
+    /*!
+     * @brief Returns the number of bytes left.
+     * @return The remaining slice length.
+     */
+    pub func(self: &SliceReader) remaining() -> usize {
+        return self.length - self.position;
+    }
+
+    /*!
+     * @brief Returns `true` when every byte has been consumed.
+     * @return Whether the position has reached the end.
+     */
+    pub func(self: &SliceReader) is_eof() -> bool {
+        return self.position >= self.length;
+    }
+
+    /*!
+     * @brief Erases this reader into the dynamic `Reader` interface.
+     * @return A dynamic reader backed by this slice.
+     */
+    pub func(self: *SliceReader) as_reader() -> Reader {
+        return Reader(self as *mut void,
+                      &SLICE_READER_VTABLE as *const ReaderVTable);
+    }
+}
+
+const SLICE_READER_VTABLE: ReaderVTable = ReaderVTable {
+    read: slice_reader_read,
+    seek: slice_reader_seek,
+};
+
+func slice_reader_read(context: *mut void, buffer: *mut u8,
+                       count: usize) -> isize {
+    let reader := context as *mut SliceReader;
+    return reader.read(buffer, count) as isize;
+}
+
+func slice_reader_seek(context: *mut void, offset: i64,
+                       origin: i32) -> i64 {
+    let reader := context as *mut SliceReader;
+    return reader.seek(SeekFrom(origin as SeekOrigin, offset));
+}

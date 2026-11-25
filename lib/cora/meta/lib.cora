@@ -1,0 +1,12 @@
+/*!
+ * @file lib.cora
+ * @brief Compile-time and reflection support entry point.
+ *
+ * The meta library defines reusable concepts, portable type metadata, and the
+ * virtual-table layout used by trait objects.  It is suitable for both hosted
+ * and freestanding programs because it never allocates.
+ */
+
+import "cora::meta::concept";
+import "cora::meta::meta";
+import "cora::meta::trait";

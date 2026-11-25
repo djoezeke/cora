@@ -1,0 +1,420 @@
+/*!
+ * @file meta.cora
+ * @brief Portable type metadata for diagnostics and reflection.
+ *
+ * The compiler can populate `TypeMetadata` records for reflected types.  This
+ * module defines the record layout and the lookup helpers; it deliberately
+ * avoids depending on any particular debug-information format.
+ */
+
+import "core::type";
+
+/*!
+ * @brief The broad category of a reflected type.
+ */
+pub enum TypeKind {
+    Void,            //!< The `void` type.
+    Bool,            //!< A boolean type.
+    SignedInteger,   //!< A signed integer type.
+    UnsignedInteger, //!< An unsigned integer type.
+    Float,           //!< A floating-point type.
+    Pointer,         //!< A raw or non-owning pointer.
+    Reference,       //!< A reference type.
+    Array,           //!< A fixed-size array.
+    Struct,          //!< A structure.
+    Union,           //!< A union.
+    Enum,            //!< An enumeration.
+    Function,        //!< A function type.
+    Concept,         //!< A concept or interface type.
+    Unknown,         //!< A type not described by this metadata.
+}
+
+/*!
+ * @brief Metadata for one structure or union field.
+ */
+pub struct FieldInfo {
+    pub name: *const u8,  //!< Null-terminated field name.
+    pub offset: usize,    //!< Byte offset from the aggregate start.
+    pub size: usize,      //!< Field size in bytes.
+    pub align: usize,     //!< Field alignment in bytes.
+    pub kind: TypeKind,   //!< Field type category.
+
+    /*!
+     * @brief Creates field metadata.
+     * @param name The field name.
+     * @param offset The byte offset.
+     * @param size The field size.
+     * @param align The field alignment.
+     * @param kind The field type category.
+     * @return The field description.
+     */
+    pub func FieldInfo(name: *const u8, offset: usize, size: usize,
+                       align: usize, kind: TypeKind) -> FieldInfo {
+        return FieldInfo {
+            name: name,
+            offset: offset,
+            size: size,
+            align: align,
+            kind: kind,
+        };
+    }
+}
+
+/*!
+ * @brief Metadata for one enumeration variant.
+ */
+pub struct VariantInfo {
+    pub name: *const u8,  //!< Null-terminated variant name.
+    pub value: i64,       //!< The variant's discriminant.
+
+    /*!
+     * @brief Creates variant metadata.
+     * @param name The variant name.
+     * @param value The discriminant value.
+     * @return The variant description.
+     */
+    pub func VariantInfo(name: *const u8, value: i64) -> VariantInfo {
+        return VariantInfo { name: name, value: value };
+    }
+}
+
+/*!
+ * @brief Metadata for one reflected function.
+ */
+pub struct FunctionInfo {
+    pub name: *const u8,      //!< Null-terminated function name.
+    pub parameter_count: usize,//!< Number of parameters.
+    pub result_size: usize,   //!< Size of the return value in bytes.
+
+    /*!
+     * @brief Creates function metadata.
+     * @param name The function name.
+     * @param parameter_count The number of parameters.
+     * @param result_size The return-value size.
+     * @return The function description.
+     */
+    pub func FunctionInfo(name: *const u8, parameter_count: usize,
+                          result_size: usize) -> FunctionInfo {
+        return FunctionInfo {
+            name: name,
+            parameter_count: parameter_count,
+            result_size: result_size,
+        };
+    }
+}
+
+/*!
+ * @brief A complete description of a reflected type.
+ */
+pub struct TypeMetadata {
+    pub kind: TypeKind,                 //!< The type category.
+    pub name: *const u8,                //!< Null-terminated type name.
+    pub size: usize,                    //!< Size in bytes.
+    pub align: usize,                   //!< Alignment in bytes.
+    pub is_copy: bool,                  //!< Whether values are trivially copyable.
+    pub is_signed: bool,                //!< Whether the type is signed.
+    pub fields: *const FieldInfo,       //!< Field array, or `null`.
+    pub field_count: usize,             //!< Number of fields.
+    pub variants: *const VariantInfo,   //!< Variant array, or `null`.
+    pub variant_count: usize,           //!< Number of variants.
+    pub functions: *const FunctionInfo, //!< Function array, or `null`.
+    pub function_count: usize,          //!< Number of functions.
+
+    /*!
+     * @brief Creates a type description.
+     * @param kind The type category.
+     * @param name The type name.
+     * @param size The type size.
+     * @param align The type alignment.
+     * @param is_copy Whether the type is trivially copyable.
+     * @param is_signed Whether the type is signed.
+     * @param fields The field array.
+     * @param field_count The number of fields.
+     * @param variants The variant array.
+     * @param variant_count The number of variants.
+     * @param functions The function array.
+     * @param function_count The number of functions.
+     * @return The type description.
+     */
+    pub func TypeMetadata(kind: TypeKind, name: *const u8, size: usize,
+                          align: usize, is_copy: bool, is_signed: bool,
+                          fields: *const FieldInfo, field_count: usize,
+                          variants: *const VariantInfo,
+                          variant_count: usize,
+                          functions: *const FunctionInfo,
+                          function_count: usize) -> TypeMetadata {
+        return TypeMetadata {
+            kind: kind,
+            name: name,
+            size: size,
+            align: align,
+            is_copy: is_copy,
+            is_signed: is_signed,
+            fields: fields,
+            field_count: field_count,
+            variants: variants,
+            variant_count: variant_count,
+            functions: functions,
+            function_count: function_count,
+        };
+    }
+
+    /*!
+     * @brief Returns a field by index.
+     * @param index The field index.
+     * @return A pointer to the field, or `null`.
+     */
+    pub func(self: &TypeMetadata) field(index: usize) -> *const FieldInfo {
+        if (index >= self.field_count || self.fields == null) {
+            return null;
+        }
+        return &self.fields[index] as *const FieldInfo;
+    }
+
+    /*!
+     * @brief Finds a field by name.
+     * @param name The null-terminated field name.
+     * @return A pointer to the field, or `null`.
+     */
+    pub func(self: &TypeMetadata) find_field(
+        name: *const u8) -> *const FieldInfo {
+        let mut index := 0;
+        while (index < self.field_count && self.fields != null) {
+            if (cstr_equals(self.fields[index].name, name)) {
+                return &self.fields[index] as *const FieldInfo;
+            }
+            index += 1;
+        }
+        return null;
+    }
+
+    /*!
+     * @brief Returns a variant by index.
+     * @param index The variant index.
+     * @return A pointer to the variant, or `null`.
+     */
+    pub func(self: &TypeMetadata) variant(
+        index: usize) -> *const VariantInfo {
+        if (index >= self.variant_count || self.variants == null) {
+            return null;
+        }
+        return &self.variants[index] as *const VariantInfo;
+    }
+
+    /*!
+     * @brief Finds a variant by name.
+     * @param name The null-terminated variant name.
+     * @return A pointer to the variant, or `null`.
+     */
+    pub func(self: &TypeMetadata) find_variant(
+        name: *const u8) -> *const VariantInfo {
+        let mut index := 0;
+        while (index < self.variant_count && self.variants != null) {
+            if (cstr_equals(self.variants[index].name, name)) {
+                return &self.variants[index] as *const VariantInfo;
+            }
+            index += 1;
+        }
+        return null;
+    }
+}
+
+/*!
+ * @brief A fixed-capacity registry of type descriptions.
+ */
+pub struct MetadataRegistry {
+    entries: *mut TypeMetadata,
+    capacity: usize,
+    count: usize,
+
+    /*!
+     * @brief Creates an empty registry over caller storage.
+     * @param entries The metadata array.
+     * @param capacity The number of array entries.
+     * @return An empty registry.
+     */
+    pub func MetadataRegistry(entries: *mut TypeMetadata,
+                              capacity: usize) -> MetadataRegistry {
+        return MetadataRegistry {
+            entries: entries,
+            capacity: capacity,
+            count: 0,
+        };
+    }
+
+    /*!
+     * @brief Returns the number of registered types.
+     * @return The current type count.
+     */
+    pub func(self: &MetadataRegistry) count() -> usize {
+        return self.count;
+    }
+
+    /*!
+     * @brief Registers a type description.
+     * @param metadata The description to add.
+     * @return `true` on success.
+     */
+    pub func(self: &mut MetadataRegistry) add(
+        metadata: TypeMetadata) -> bool {
+        if (self.count >= self.capacity) {
+            return false;
+        }
+        self.entries[self.count] = metadata;
+        self.count += 1;
+        return true;
+    }
+
+    /*!
+     * @brief Returns a type description by index.
+     * @param index The entry index.
+     * @return A pointer to the description, or `null`.
+     */
+    pub func(self: &MetadataRegistry) at(
+        index: usize) -> *const TypeMetadata {
+        if (index >= self.count) {
+            return null;
+        }
+        return &self.entries[index] as *const TypeMetadata;
+    }
+
+    /*!
+     * @brief Finds a type description by name.
+     * @param name The null-terminated type name.
+     * @return The entry index, or `Option::None`.
+     */
+    pub func(self: &MetadataRegistry) find(
+        name: *const u8) -> Option<usize> {
+        let mut index := 0;
+        while (index < self.count) {
+            if (cstr_equals(self.entries[index].name, name)) {
+                return Option<usize>::Some(index);
+            }
+            index += 1;
+        }
+        return Option<usize>::None;
+    }
+}
+
+/*!
+ * @brief Builds compile-time metadata for a type.
+ * @tparam T The type to describe.
+ * @param name The type name.
+ * @param kind The type category.
+ * @return A metadata record with size and alignment filled in.
+ */
+pub comptime func type_metadata<T>(name: *const u8,
+                                   kind: TypeKind) -> TypeMetadata {
+    return TypeMetadata {
+        kind: kind,
+        name: name,
+        size: sizeof(T),
+        align: alignof(T),
+        is_copy: true,
+        is_signed: false,
+        fields: null,
+        field_count: 0,
+        variants: null,
+        variant_count: 0,
+        functions: null,
+        function_count: 0,
+    };
+}
+
+/*!
+ * @brief Builds minimal metadata for a type.
+ * @tparam T The type to describe.
+ * @return A metadata record with an unknown category and name.
+ */
+pub comptime func metadata_for<T>() -> TypeMetadata {
+    return type_metadata<T>("unknown", TypeKind::Unknown);
+}
+
+/*!
+ * @brief Tests whether a type category is numeric.
+ * @param kind The category to test.
+ * @return `true` for integer and floating-point categories.
+ */
+pub func is_numeric_type(kind: TypeKind) -> bool {
+    return kind == TypeKind::SignedInteger ||
+           kind == TypeKind::UnsignedInteger ||
+           kind == TypeKind::Float;
+}
+
+/*!
+ * @brief Tests whether a type category is an aggregate.
+ * @param kind The category to test.
+ * @return `true` for arrays, structures, and unions.
+ */
+pub func is_aggregate_type(kind: TypeKind) -> bool {
+    return kind == TypeKind::Array || kind == TypeKind::Struct ||
+           kind == TypeKind::Union;
+}
+
+/*!
+ * @brief Returns a human-readable name for a type category.
+ * @param kind The category to name.
+ * @return A null-terminated category name.
+ */
+pub func type_kind_name(kind: TypeKind) -> *const u8 {
+    if (kind == TypeKind::Void) {
+        return "void";
+    }
+    if (kind == TypeKind::Bool) {
+        return "bool";
+    }
+    if (kind == TypeKind::SignedInteger) {
+        return "signed integer";
+    }
+    if (kind == TypeKind::UnsignedInteger) {
+        return "unsigned integer";
+    }
+    if (kind == TypeKind::Float) {
+        return "float";
+    }
+    if (kind == TypeKind::Pointer) {
+        return "pointer";
+    }
+    if (kind == TypeKind::Reference) {
+        return "reference";
+    }
+    if (kind == TypeKind::Array) {
+        return "array";
+    }
+    if (kind == TypeKind::Struct) {
+        return "struct";
+    }
+    if (kind == TypeKind::Union) {
+        return "union";
+    }
+    if (kind == TypeKind::Enum) {
+        return "enum";
+    }
+    if (kind == TypeKind::Function) {
+        return "function";
+    }
+    if (kind == TypeKind::Concept) {
+        return "concept";
+    }
+    return "unknown";
+}
+
+/*!
+ * @brief Compares two null-terminated strings for equality.
+ * @param left The first string.
+ * @param right The second string.
+ * @return `true` when both strings contain the same bytes.
+ */
+func cstr_equals(left: *const u8, right: *const u8) -> bool {
+    if (left == null || right == null) {
+        return left == right;
+    }
+    let mut index := 0;
+    while (left[index] != 0 && right[index] != 0) {
+        if (left[index] != right[index]) {
+            return false;
+        }
+        index += 1;
+    }
+    return left[index] == right[index];
+}

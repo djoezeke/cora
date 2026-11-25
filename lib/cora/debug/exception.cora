@@ -1,0 +1,266 @@
+/*!
+ * @file exception.cora
+ * @brief Structured error values and fatal-exception reporting.
+ *
+ * Cora does not use language-level exceptions.  `Exception` is a small value
+ * that pairs an error code with a message and source location, while
+ * `Result<T, Exception>` is the preferred way to return recoverable failures.
+ * `raise` is provided for unrecoverable paths and terminates the process.
+ */
+
+import "core::type";
+import "core::debug::lib";
+
+/*!
+ * @brief A portable classification of an error.
+ */
+pub enum ExceptionCode {
+    None,              //!< No error.
+    InvalidArgument,   //!< A caller supplied an invalid argument.
+    OutOfRange,        //!< An index or value is outside its valid range.
+    NotFound,          //!< A requested resource does not exist.
+    PermissionDenied,  //!< The operation is not permitted.
+    ResourceExhausted, //!< Memory, handles, or another resource ran out.
+    Unavailable,       //!< A required service is temporarily unavailable.
+    Timeout,           //!< The operation exceeded its deadline.
+    Internal,          //!< An invariant was violated inside the program.
+    Unknown,           //!< An unclassified failure.
+}
+
+/*!
+ * @brief An error value with a message and source location.
+ */
+pub struct Exception {
+    pub code: ExceptionCode,  //!< The error classification.
+    pub message: *const u8,   //!< Null-terminated message text.
+    pub location: Location,   //!< Source location of the error.
+    pub context: *mut void,   //!< Optional caller-owned context.
+
+    /*!
+     * @brief Creates an exception with no attached context.
+     * @param code The error classification.
+     * @param message The message text.
+     * @param file The source file name.
+     * @param line The source line.
+     * @return The new exception.
+     */
+    pub func Exception(code: ExceptionCode, message: *const u8,
+                       file: *const u8, line: u32) -> Exception {
+        return Exception {
+            code: code,
+            message: message,
+            location: Location(file, line, 0),
+            context: null,
+        };
+    }
+
+    /*!
+     * @brief Attaches caller-owned context to the exception.
+     * @param context The context pointer.
+     * @return The updated exception.
+     */
+    pub func with_context(self: Exception, context: *mut void) -> Exception {
+        return Exception {
+            code: self.code,
+            message: self.message,
+            location: self.location,
+            context: context,
+        };
+    }
+
+    /*!
+     * @brief Returns the error classification.
+     * @return The exception code.
+     */
+    pub func(self: &Exception) kind() -> ExceptionCode {
+        return self.code;
+    }
+
+    /*!
+     * @brief Returns the error message.
+     * @return The null-terminated message text.
+     */
+    pub func(self: &Exception) what() -> *const u8 {
+        return self.message;
+    }
+
+    /*!
+     * @brief Returns `true` for errors that should terminate the process.
+     * @return Whether the code is `Internal` or `Unknown`.
+     */
+    pub func(self: &Exception) is_fatal() -> bool {
+        return self.code == ExceptionCode::Internal ||
+               self.code == ExceptionCode::Unknown;
+    }
+
+    /*!
+     * @brief Tests whether two exceptions carry the same code and message.
+     * @param other The exception to compare against.
+     * @return `true` when both fields match.
+     */
+    pub func(self: &Exception) equals(other: Exception) -> bool {
+        if (self.code != other.code) {
+            return false;
+        }
+        return cstr_equals(self.message, other.message);
+    }
+}
+
+/*!
+ * @brief A callback that handles an exception.
+ * @return `true` when the handler consumed the exception.
+ */
+pub using ExceptionHandler = func(exception: *const Exception) -> bool;
+
+/*!
+ * @brief A fixed-capacity stack of exceptions owned by the caller.
+ */
+pub struct ExceptionStack {
+    entries: *mut Exception,
+    capacity: usize,
+    count: usize,
+
+    /*!
+     * @brief Creates an empty stack over caller-provided storage.
+     * @param entries The exception array.
+     * @param capacity The number of array entries.
+     * @return An empty exception stack.
+     */
+    pub func ExceptionStack(entries: *mut Exception,
+                            capacity: usize) -> ExceptionStack {
+        return ExceptionStack {
+            entries: entries,
+            capacity: capacity,
+            count: 0,
+        };
+    }
+
+    /*!
+     * @brief Returns the number of stored exceptions.
+     * @return The current depth.
+     */
+    pub func(self: &ExceptionStack) count() -> usize {
+        return self.count;
+    }
+
+    /*!
+     * @brief Returns `true` when the stack is empty.
+     * @return Whether the depth is zero.
+     */
+    pub func(self: &ExceptionStack) is_empty() -> bool {
+        return self.count == 0;
+    }
+
+    /*!
+     * @brief Pushes an exception.
+     * @param exception The exception to push.
+     * @return `true` on success.
+     */
+    pub func(self: &mut ExceptionStack) push(exception: Exception) -> bool {
+        if (self.count >= self.capacity) {
+            return false;
+        }
+        self.entries[self.count] = exception;
+        self.count += 1;
+        return true;
+    }
+
+    /*!
+     * @brief Pops the most recent exception.
+     * @return The popped exception, or `Option::None` when empty.
+     */
+    pub func(self: &mut ExceptionStack) pop() -> Option<Exception> {
+        if (self.count == 0) {
+            return Option<Exception>::None;
+        }
+        self.count -= 1;
+        return Option<Exception>::Some(self.entries[self.count]);
+    }
+
+    /*!
+     * @brief Returns the most recent exception without removing it.
+     * @return A pointer to the top exception, or `null`.
+     */
+    pub func(self: &ExceptionStack) peek() -> *const Exception {
+        if (self.count == 0) {
+            return null;
+        }
+        return &self.entries[self.count - 1] as *const Exception;
+    }
+
+    /*!
+     * @brief Removes every exception.
+     */
+    pub func(self: &mut ExceptionStack) clear() -> void {
+        self.count = 0;
+    }
+}
+
+/*!
+ * @brief Creates a successful result containing an exception type.
+ * @tparam T The success type.
+ * @param value The success value.
+ * @return `Result::Ok(value)`.
+ */
+pub func ok<T>(value: T) -> Result<T, Exception> {
+    return Result<T, Exception>::Ok(value);
+}
+
+/*!
+ * @brief Creates a failed result containing an exception.
+ * @tparam T The success type.
+ * @param exception The failure value.
+ * @return `Result::Err(exception)`.
+ */
+pub func fail<T>(exception: Exception) -> Result<T, Exception> {
+    return Result<T, Exception>::Err(exception);
+}
+
+/*!
+ * @brief Passes a handler an exception when one is present.
+ * @param value The result to inspect.
+ * @param handler The callback to invoke on failure.
+ * @return `true` when the result was successful or the handler consumed it.
+ */
+pub func handle_exception<T>(value: Result<T, Exception>,
+                             handler: *const ExceptionHandler) -> bool {
+    return match (value) {
+        Result<T, Exception>::Ok(_) => true,
+        Result<T, Exception>::Err(exception) => {
+            if (handler == null) {
+                false
+            } else {
+                handler(&exception as *const Exception)
+            }
+        },
+    };
+}
+
+/*!
+ * @brief Terminates the process after reporting an exception.
+ * @param exception The fatal exception.
+ * @return This function never returns.
+ */
+pub func raise(exception: Exception) -> never {
+    panic(exception.message);
+}
+
+/*!
+ * @brief Compares two null-terminated strings for equality.
+ * @param left The first string.
+ * @param right The second string.
+ * @return `true` when both strings contain the same bytes.
+ */
+func cstr_equals(left: *const u8, right: *const u8) -> bool {
+    if (left == null || right == null) {
+        return left == right;
+    }
+    let mut index := 0;
+    while (left[index] != 0 && right[index] != 0) {
+        if (left[index] != right[index]) {
+            return false;
+        }
+        index += 1;
+    }
+    return left[index] == right[index];
+}
