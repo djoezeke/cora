@@ -1,0 +1,222 @@
+//! An owned, growable UTF-8 byte string.
+//!
+//! `String` owns its storage through an `Allocator` fat pointer.  It keeps a
+//! trailing NUL byte so `cstr()` can be handed to C APIs without copying.
+
+import "core::mem::Allocator";
+import "core::text::StringView";
+
+import < stdio.h >;
+
+pub struct String {
+    data: *mut u8,
+    length: usize,
+    capacity: usize,
+    allocator: Allocator,
+
+    pub func String(allocator: Allocator) -> String {
+        return String {
+            data: null,
+            length: 0,
+            capacity: 0,
+            allocator: allocator,
+        };
+    }
+
+    pub func with_capacity(allocator: Allocator, capacity: usize) -> String {
+        let mut result := String(allocator);
+        if (capacity > 0) {
+            let raw := result.allocator.alloc(capacity, 1);
+            if (raw != null) {
+                result.data = raw;
+                result.capacity = capacity;
+                result.data[0] = 0;
+            }
+        }
+        return result;
+    }
+
+    pub func from_view(allocator: Allocator, view: StringView) -> String {
+        let mut result := String(allocator);
+        result.append_view(view);
+        return result;
+    }
+
+    pub func from_cstr(allocator: Allocator, text: *const u8) -> String {
+        return String::from_view(allocator, StringView::from_cstr(text));
+    }
+
+    pub func(self: &String) len() -> usize {
+        return self.length;
+    }
+
+    pub func(self: &String) cap() -> usize {
+        return self.capacity;
+    }
+
+    pub func(self: &String) is_empty() -> bool {
+        return self.length == 0;
+    }
+
+    pub func(self: &String) bytes() -> *const u8 {
+        return self.data as * const u8;
+    }
+
+    pub func(self: &String) view() -> StringView {
+        return StringView(self.data as * const u8, self.length);
+    }
+
+    pub func(self: &String) cstr() -> *const u8 {
+        // The trailing NUL is maintained by reserve, append, and clear.
+        return self.data as * const u8;
+    }
+
+    pub func(self: &mut String) reserve(additional: usize) -> bool {
+        let needed := self.length + additional + 1;
+        if (self.capacity >= needed) {
+            return true;
+        }
+
+        let mut new_capacity := if (self.capacity == 0) {
+            needed
+        } else {
+            self.capacity
+        };
+        while (new_capacity < needed) {
+            new_capacity = new_capacity * 2;
+        }
+
+        let raw := if (self.data == null) {
+            self.allocator.alloc(new_capacity, 1)
+        } else {
+            self.allocator.realloc(self.data, self.capacity,
+                new_capacity, 1)
+        };
+        if (raw == null) {
+            return false;
+        }
+
+        self.data = raw;
+        self.capacity = new_capacity;
+        self.data[self.length] = 0;
+        return true;
+    }
+
+    pub func(self: &mut String) append_view(view: StringView) -> void {
+        if (!self.reserve(view.len())) {
+            return;
+        }
+
+        let mut index := 0;
+        while (index < view.len()) {
+            self.data[self.length] = view.data[index];
+            self.length += 1;
+            index += 1;
+        }
+        self.data[self.length] = 0;
+    }
+
+    pub func(self: &mut String) append_char(byte: u8) -> void {
+        if (!self.reserve(1)) {
+            return;
+        }
+        self.data[self.length] = byte;
+        self.length += 1;
+        self.data[self.length] = 0;
+    }
+
+    pub func(self: &mut String) append_cstr(text: *const u8) -> void {
+        self.append_view(StringView::from_cstr(text));
+    }
+
+    pub func(self: &mut String) append_bool(value: bool) -> void {
+        if (value) {
+            self.append_cstr("true");
+        } else {
+            self.append_cstr("false");
+        }
+    }
+
+    pub func(self: &mut String) append_i32(value: i32) -> void {
+        if (value == 0) {
+            self.append_char('0');
+            return;
+        }
+
+        let mut magnitude: u32 = 0;
+        if (value < 0) {
+            self.append_char('-');
+            // Negating the unsigned magnitude also handles the minimum i32.
+            magnitude = 0u32 -(value as u32);
+        } else {
+            magnitude = value as u32;
+        }
+
+        let mut digits: u8[32] = [0; 32];
+        let mut count := 0;
+        while (magnitude > 0) {
+            digits[count] = 48u8 +(magnitude % 10) as u8;
+            count += 1;
+            magnitude = magnitude / 10;
+        }
+
+        while (count > 0) {
+            count -= 1;
+            self.append_char(digits[count]);
+        }
+    }
+
+    pub func(self: &mut String) append_u32(mut value: u32) -> void {
+        if (value == 0) {
+            self.append_char('0');
+            return;
+        }
+
+        let mut digits: u8[32] = [0; 32];
+        let mut count := 0;
+        while (value > 0) {
+            digits[count] = 48u8 +(value % 10) as u8;
+            count += 1;
+            value = value / 10;
+        }
+
+        while (count > 0) {
+            count -= 1;
+            self.append_char(digits[count]);
+        }
+    }
+
+    pub func(self: &mut String) clear() -> void {
+        self.length = 0;
+        if (self.data != null) {
+            self.data[0] = 0;
+        }
+    }
+
+    pub func(self: &String) equals(other: StringView) -> bool {
+        return self.view().equals(other);
+    }
+
+    pub func(self: &String) compare(other: StringView) -> i32 {
+        return self.view().compare(other);
+    }
+
+    pub func(self: &String) hash() -> u32 {
+        return self.view().hash();
+    }
+
+    pub func(self: &mut String) deinit() -> void {
+        if (self.data != null) {
+            self.allocator.free(self.data, self.capacity, 1);
+        }
+        self.data = null;
+        self.length = 0;
+        self.capacity = 0;
+    }
+
+    pub func ~String() -> void {
+        self.deinit();
+    }
+}
+
+using StringBuilder = String;
