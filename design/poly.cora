@@ -1,0 +1,62 @@
+// 1. Plain data structs (zero inheritance, zero keywords, zero hidden pointers)
+struct Buffer {
+    data: []u8,
+    pos: usize = 0,
+
+    pub fn write(self: *Buffer, bytes: []const u8) !usize {
+        const n = min(bytes.len, self.data.len - self.pos);
+        memcpy(self.data[self.pos..], bytes[0..n]);
+        self.pos += n;
+        return n;
+    }
+}
+
+struct Socket {
+    fd: i32,
+
+    pub fn write(self: *Socket, bytes: []const u8) !usize {
+        return sys_write(self.fd, bytes);
+    }
+}
+
+// 2. Define a structural shape (just a type alias for a method set—no class/trait)
+const Writer = struct {
+    write: fn(self, bytes: []const u8) !usize,
+};
+
+// -------------------------------------------------------------------------
+// STATIC POLYMORPHISM (`any Writer`)
+// Monomorphized at compile time: zero vtable, zero indirection, fully inlined.
+// -------------------------------------------------------------------------
+fn writeHeaderStatic(out: any Writer, version: u8) !void {
+    _ = try out.write(&.{ 'M', 'A', 'G', version });
+}
+
+// -------------------------------------------------------------------------
+// DYNAMIC POLYMORPHISM (`dyn Writer`)
+// Compiler auto-packs (&instance, &rodata_vtable) into 2 registers.
+// Single compiled function in binary: zero code bloat.
+// -------------------------------------------------------------------------
+fn writeHeaderDynamic(out: dyn Writer, version: u8) !void {
+    _ = try out.write(&.{ 'M', 'A', 'G', version });
+}
+
+// 3. Usage: Identical call-site ergonomics
+fn main() !void {
+    var buf = Buffer{ .data = &raw_mem };
+    var sock = Socket{ .fd = 3 };
+
+    // Static: compiler generates writeHeaderStatic__Buffer and writeHeaderStatic__Socket
+    try writeHeaderStatic(&buf, 1);
+    try writeHeaderStatic(&sock, 1);
+
+    // Dynamic: compiler passes (&buf, &Buffer_VTable) -> single machine code body
+    try writeHeaderDynamic(&buf, 1);
+    try writeHeaderDynamic(&sock, 1);
+
+    // Heterogeneous array: impossible with static polymorphism, trivial with `dyn`
+    const targets = [_]dyn Writer{ &buf, &sock };
+    for (targets) |target| {
+        _ = try target.write("PING");
+    }
+}
