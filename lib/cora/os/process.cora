@@ -1,0 +1,15 @@
+//! Hosted process control.
+
+[[link_name("exit")]]
+extern "C" func c_exit(code: i32) -> void;
+
+[[link_name("abort")]]
+extern "C" func c_abort() -> void;
+
+pub func exit(code: i32) -> void {
+    c_exit(code);
+}
+
+pub func abort() -> void {
+    c_abort();
+}

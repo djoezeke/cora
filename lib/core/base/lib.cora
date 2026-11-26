@@ -1,0 +1,3 @@
+//! Base types shared by the core library.
+
+import "core::base::Option";

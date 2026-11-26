@@ -1,0 +1,73 @@
+//! Hosted standard streams and line input.
+//!
+//! This module is deliberately small: it demonstrates how the hosted layer
+//! sits on top of the same `Allocator` and `String` types as the core layer.
+
+import "core::mem::Allocator";
+import "core::text::String";
+import "core::text::StringView";
+
+[[link_name("write")]]
+extern "C" func c_write(fd: i32, data: *const u8, count: usize) -> isize;
+
+[[link_name("read")]]
+extern "C" func c_read(fd: i32, data: *mut u8, count: usize) -> isize;
+
+pub func write(fd: i32, view: StringView) -> isize {
+    if (view.is_empty()) {
+        return 0;
+    }
+    return c_write(fd, view.bytes(), view.len());
+}
+
+pub func print(view: StringView) -> void {
+    write(1, view);
+}
+
+pub func println(view: StringView) -> void {
+    print(view);
+    write_byte(1, 10);
+}
+
+pub func eprint(view: StringView) -> void {
+    write(2, view);
+}
+
+pub func eprintln(view: StringView) -> void {
+    eprint(view);
+    write_byte(2, 10);
+}
+
+pub func print_cstr(text: *const u8) -> void {
+    print(StringView::from_cstr(text));
+}
+
+pub func println_cstr(text: *const u8) -> void {
+    println(StringView::from_cstr(text));
+}
+
+pub func read_line(allocator: Allocator) -> String {
+    let mut line := String(allocator);
+    let mut byte: u8 = 0;
+
+    while (true) {
+        let count := c_read(0, &mut byte as *mut u8, 1);
+        if (count <= 0) {
+            break;
+        }
+        if (byte == '\n') {
+            break;
+        }
+        if (byte == '\r') {
+            continue;
+        }
+        line.append_char(byte);
+    }
+
+    return line;
+}
+
+func write_byte(fd: i32, byte: u8) -> void {
+    let mut local := byte;
+    c_write(fd, &local as *const u8, 1);
+}

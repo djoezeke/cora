@@ -1,33 +1,47 @@
-//! A doc comment that applies to the implicit anonymous mod of this file.
-
 // Line Comment
 //! Line Doc Comment
 /** Block Comment **/
 /*! Block Doc Comment **/
 /** Nested /** Block Comment **/ **/
+/*! Nested Doc /** Block Comment **/ **/
 
-// ruff: lint on(readability-identifier-naming)
-// ruff: lint off(readability-identifier-naming)
+import "std::fmt::{print, println}";
+import "std::io";
+import "std::process";
+import "std::math";
+import "std::meta";
+import "std::memory";
 
-// ruff: format on
-// ruff: format off
+// C interoperability import style
+import <sdl/sdl.h>;
+import <glfw3/glfw3.h>;
+import <myjson/myjson.hpp>;
 
-// cora: diagnostic push
-// cora: diagnostic pop
-// cora: diagnostic ignore
-
-// region: 
-// endregion:
-
-public mod main;
-
-private mod detail { 
-    func id() -> i32 {
+mod detail { 
+    [[nodiscard]] func id() -> i32 {
         return 32; 
     }
 
     const id: i32 = id();
 
+};
+
+// `$x:fragment` specifiers are mandatory for captures.
+// Hygiene is the default; call-site identifiers cannot be captured.
+macro vec {
+    ($($x:expr),* $(,)?) => {
+        {
+            let mut temp = Vec::new();
+            $( temp.push($x); )*
+            temp
+        }
+    };
+}
+
+mod det::ail { 
+    [[nodiscard]] func id() -> i32 {
+        return 32; 
+    }
 };
 
 {
@@ -41,341 +55,476 @@ private mod detail {
 const id: i32 = ::details::id();
 const id: i32 = main::details::id();
 
-/// keywords
-// explicit
-// override
-// inline
-// this
-
-/// Standard Library Classes
-// optional<type>
-
-/// Standard Library Functions
-// addressof()
-// copy()
-
-public extern func min(a: i32, b: i32) -> i32 {}
-
-// typedef struct Point Point;
-// typedef int StudentID;
-
-
-// static/extern/export
-// constexpr
-// constexpr const Value& operator[](Enum key) const;
-// private func add_internal(a: i32, b: const i32) noexcept -> const i32 {}
-
-// Casting 
-// cast<type>(value)
-
-// function 
-type StudentID int32;
+pub extern func min(a: i32, b: i32) -> i32 {}
 
 const program := 23;
 
-public mod main
+let array: i32[5] = [1, 2, 3, 4, 5];
+let tuple: (i32, i32, i32) = (1, 2, 3);
 
-// using std::io::println;
-// using StudentID = int32;
-// ::curent::func();
+using Object =  func(int) -> int;
 
-// #pragma warning(push)
-// #pragma warning(disable : 4127)
-// #pragma warning(pop)
+[[deprecated("Use checked_sum")]]
+func old_sum(values: &[i32]) -> i32 {
+    let mut total = 0;
+    for (value : values) { total += *value; }
+    return total;
+}
 
-// #error "ouch"
-// #warning "ouch"
+func LogDecorate(f: Object) -> Object {
+	return func(n int) -> int {
+		log.Println("Starting the execution with the integer", n)
 
-comptime @define(MAX,200)
-comptime @undefine(MAX)
+		result := f(n)
 
-comptime {
-    if (!defined(MAX)){
-        @define(MAX,200)
+		log.Println("Execution is completed with the result", result)
+
+        return result
+	}
+}
+
+func Double(n int) -> int {
+    return n * 2
+}
+
+f := LogDecorate(Double)
+
+f(5)
+
+// ---------------------------------------------------------------------------
+// Custom-size ints and floats
+// ---------------------------------------------------------------------------
+
+using i8 = int<8>;   
+using i128 = int<128>;   
+using i256 = int<256>;   
+using i512 = int<512>;
+using u8 = uint<8>;  
+using u128 = uint<128>;  
+using u256 = uint<256>;  
+using u512 = uint<512>;
+using f16 = float<5, 10>;  
+using bf16 = float<8, 7>;  
+using f32 = float<8, 23>;
+using f64 = float<11, 52>; 
+using f128 = float<15, 112>; 
+using f256 = float<19, 236>;
+
+let a = 0xFFFF_FFFF_u256;        // literal suffix = any alias name
+let b: uint<9> = 300;            // other widths: typed literal, range-checked at compile time
+let c = 1.5f128 * 2.0f128;
+
+// ---------------------------------------------------------------------------
+// Generics
+// ---------------------------------------------------------------------------
+
+// Generic Function `func sort<T>(v: T[]) -> T[];`
+
+func getMax<T>(a: T, b: T) -> T {
+    return (a > b) ? a : b;
+}
+
+// Generic Type/Struct `struct vector<T>;` 
+
+[[packed]] struct Box<T> {
+    v: T,
+
+    pub func Box(value: T) -> Box<T> {
+        return Box<T>{v: value};
+    } 
+}
+
+
+// ============================================================================
+// Constraint
+// ============================================================================
+
+// Restricts T to types that support standard arithmetic addition
+func add<T: Integral>(a: T, b: T) -> T {
+    return a + b;
+}
+
+// ---------------------------------------------------------------------------
+// C interoperability
+// ---------------------------------------------------------------------------
+
+import <stdio.h>;
+
+pub func print(msg: u8[]) -> void {
+    unsafe("uses c printf") {
+        printf("%s\n",msg);
     }
 }
 
+// ---------------------------------------------------------------------------
+// Compile time Function
+// ---------------------------------------------------------------------------
 
-
-@defined(MAX)
-@error("message")
-@warning("message")
-
-// #define
-// #undefine
-// #if defined()
-// #elif defined()
-// #else
-// #endif
-
-let array: i32[5] = {1, 2, 3, 4, 5};
-let array = &[1, 2, 3];
-
-type Callback = struct {
-    // function pointer
-    new: func(a: i32, b: i32) -> i32,
+/*!
+ * @brief Align a value up.
+ * @param v the value.
+ * @param a alignment
+ */
+comptime func align(v: usize, a: usize) -> usize {
+    return ((v + a - 1) && !(a - 1));
 }
 
-type add := func(a: i32, b: i32) -> i32 {
-    return a + b;
-}
+const HEADER_SIZE = align(13,8);
 
-type add := func(u: *User) (a: i32, b: i32) -> {
-
-}
-
-[[nodiscard]] func add(a: i32, b: i32) -> i32 {
-    return a + b;
-}
-
-comptime func add<T>(a: T, b: T) -> T {
-    return a + b;
-}
-
-// macro example
-
-// Attributes
-[[fallthrough]]
-[[deprecated]]
-[[unused]]
-
-/// Unions
-
-type Value = union {}
-
-/// Structures
-
-type User = struct {
-    public using a_type = T;
-    private using b_type = T;
-
-    id: u64,
-    age: u32
-}
-
-const zeke: User = {id: 1, age:21}
-
-func(u: *User) getID() -> u64 {
-    return u->id;
-}
-
-const zeke_id: u32 = zeke.getID();
-
-func(u: *User) getIDPlus<T>(T: inc) -> T {
-    return u->id + inc;
-}
-
-const zeke_id: u32 = zeke.getIDPlus<u32>(23);
-
-comptime type User<T,S> = struct {
-    id: T,
-    age: S
-}
-
-const czeke: User<i32,i32> = {id: 1, age:21}
-
-comptime func(u: *User<T,S>) getID() -> T {
-    return u->id;
-}
-
-const zeke_id:= czeke.getID();
-
-comptime func (u: *User<T,S>) getIDPlus<X>(X: inc) -> X {
-    return u->id + inc;
-}
-
-const zeke_id:= czeke.getIDPlus(23);
-
-// Enum
-
-type Color = enum {
-    red: = 1,
-    green: 2
-}
-
-type Color = enum(code: i32) {
-    red(): u64,
-    age(): u32
-}
-
-comptime type Color<T: common_with() > = enum {
-    id: T,
-    age: S
-}
-
-
-// switch
-
-switch(color){
-    MONDAY -> "monday"
-    MONDAY -> "monday"
-    MONDAY -> "monday"
-    MONDAY -> "monday"
-    MONDAY -> "monday"
-}
-
-switch(day){
-    MONDAY, TUESDAY, WEDNESDAY, THURSDAY, FRIDAY -> "school"
-    SATURDAY, SUNDAY -> "home"
-}
-
-// Interfaces
-
-type Reader = interfaces {
-    data: u64
-}
-
-func (r: *Reader) read() -> none {
-    // data reading
-}
-
-type FileReader = struct : Reader  {
-    file_id: i32
-}
-
-func (r: *FileReader) read() -> none {
-    // data reading
-}
-
-///////////////////////////////////////////////////////////
-///////////////////////////////////////////////////////////
-
-import (
-	std::fmt::{println, writeln};
-	std::sys;
-	std::log;
-)
-
-var (
-    id: i32 = 20;
-    pos: i32 = 10;
-)
-
-const (
-    max: i32 = 20;
-    min: i32 = 10;
-)
-
-type (
-	Status = enum {
-		Passed,
-        Failed
-	}
-
-	Event = struct {
-		data: i64
-	}
-
-	Observer = interface {
-		func OnNotify(Event) -> none ;
-	}
-
-	Notifier = interface {
-		func Register(Observer) -> none;
-		func Deregister(Observer) -> none;
-		func Notify(Event) -> none;
-	}
-)
-
-///////////////////////////////////////////////////////////
-/// 
-///////////////////////////////////////////////////////////
-mut x = 0x123; // 123u32, 123_i32                           
-mut x = 0x123; // 123f32, 123f64 
-
-mut x = 0b101;
-mut x = 0b101u8;
-mut x = 0x123u16;
-mut x = 0x123u32;
-mut x = 0o123u64;
-mut x = 0o123u128;
-mut x = 0x123_123u8;
-mut x = 1_000_000;
-
-mut x = 'h'; //                           
-mut x = 'H'u8; //                           
-mut x = r'H'u16; //                           
-mut x = r'H'u32; //                           
-
-mut x = "hello"u8; //                           
-mut x = "world"u16; //                           
-mut x = "!"u32; //                           
-mut x = r"hello"u16; //                           
-
-mut x = 2.0e3f32;                       
-mut x = 2.0f64;
-mut x = 2.0f128;
-
-///////////////////////////////////////////////////////////
-/// 
-///////////////////////////////////////////////////////////
-
-trait Shape {
-    type Pos =  u32[2];
-
-    func draw(s: &Surface) -> void;
-}
-
-type Rect = struct {
-    width: u32,
-    height: u32,
-}
-
-impl Rect {
-    func(r: &Rect) area() -> u32 {
-        r.width * r.height
+comptime func fib(n: u32) -> u32 {
+    if (n < 2){ 
+        return n; 
+    } else {
+        return fib(n - 1) + fib(n - 2); 
     }
 }
 
-impl Shape for Rect {
-    func(r: &Rect) draw(s: &Surface) -> void {
-        r.width * r.height
+// ---------------------------------------------------------------------------
+// Procedural Macro
+// ---------------------------------------------------------------------------
+
+macro func square(x: Expr<i32>) -> Expr<i32> {
+    quote!{ { let t = $x; t * t } }         // `t` is hygienic
+}
+
+let n := square!(3 + 1);                     // 16, not 3 + 1 * 3 + 1
+
+macro func make_getters(input: Syntax) -> Syntax {
+    let fields = reflect(input).fields;
+    syntax {
+        $(for field in fields {
+            pub fn $(field.name)(self: &Self) -> $(field.type) {
+                self.$(field.name)
+            }
+        })
     }
 }
 
-///////////////////////////////////////////////////////////
-/// Generic Programming
-///////////////////////////////////////////////////////////
+// ---------------------------------------------------------------------------
+// Enums, unions, and pattern-driven data types
+// ---------------------------------------------------------------------------
 
-func max<T>(nums: ...T) -> T {
-    return a + b;
+pub enum Ordering : i8 {
+    Less = -1,
+    Equal = 0,
+    Greater = 1,
 }
 
-func add<T>(a: T, b: T) -> T {
-    return a + b;
+pub enum Option<T> {
+    None,
+    Some(T),
 }
 
-type array<T, S: u32> = struct {
-    data: T[S]
+pub enum Result<T, E> {
+    Ok(T),
+    Err(E),
 }
 
-///////////////////////////////////////////////////////////
-/// Decorator Pattern
-///////////////////////////////////////////////////////////
-
-type Object = func(u32) -> u32;
-
-func LogDecorate(fn: Object) -> Object {
-	return func(n: u32) -> u32 {
-
-		println("Starting the execution with the integer", n);
-		result := fn(n);
-		log.Println("Execution is completed with the result", result);
-
-        return result;
-	}
+pub union Storage {
+    integer: i64,
+    pointer: *mut u8,
+    bytes: u8[16],
 }
 
-func Double(n: u32) -> u32 {
-    return n * 2;
+pub enum Token {
+    Identifier(str),
+    Integer(i64),
+    Float(f64),
+    End,
 }
 
-func Tripple(n: u32) -> u32 {
-    return n * 3;
+
+// ---------------------------------------------------------------------------
+// Statements, control flow, jumps, and defer
+// ---------------------------------------------------------------------------
+
+pub func control_flow_demo(input: i32) -> i32 {
+    mut total := 0;
+
+    if (input < 0) {
+        total -= input;
+    } else if (input == 0) {
+        total = 1;
+    } else {
+        total = input;
+    }
+
+    mut i := 0;
+    while (i < 3) {
+        total += i;
+        i += 1;
+    }
+
+    for (mut j: i32 = 0; j < 2; j += 1) {
+        total += j;
+    }
+
+    let values := [10, 20, 30];
+    for (value : values) {
+        total += value;
+    }
+
+    let label := match (total) {
+        0 => "zero",
+        1..=9 => "small",
+        _ => "large",
+    };
+
+    outer: for (mut k: i32 = 0; k < 2; k += 1) {
+        for (mut m: i32 = 0; m < 2; m += 1) {
+            if (m == 1) {
+                continue outer;
+            }
+            if (k == 1) {
+                break outer;
+            }
+        }
+    }
+
+    
+    [[unlikely]] if (total < 0) {
+        goto cleanup;
+    }
+
+    defer println("control_flow_demo done");
+
+    return total;
+
+cleanup:
+    return 0;
 }
 
-LogDouble := LogDecorate(Double);
-LogTripple := LogDecorate(Double);
+// Flexible. Runs at compile time if inputs are constant, else runtime.
+comptime func compute(x: u32) -> u32 {
+    let sum: u32 = 0;
+    for (i: u32 = 1; i <= x; ++i) {
+        sum += i;
+    }
+    return sum;
+}
 
-LogDouble(5);
-LogTripple(5)
+// Execute at compile time; compiler error otherwise.
+comptime func fnv1a_hash(const char* str) -> u32 {
+    let hash: u32 = 2166136261u32;
+    while (*str) {
+        hash ^= static_cast<uint8_t>(*str++);
+        hash *= 16777619u;
+    }
+    return hash;
+}
+
+// Dynamic memory allocation inside comptime (must be freed before returning)
+comptime func count_even_numbers(max: u32) -> usize {
+    std::vector<u32> vec; // Dynamic allocation at compile time!
+    for (int i = 0; i < max; ++i) {
+        if (i % 2 == 0) vec.push_back(i);
+    }
+    return vec.size(); // 'vec' is destroyed here, freeing memory before compile-time ends
+}
+
+// Runtime vs. Compile-time branching inside a single comptime function
+comptime func dual_mode_calc(x: u32) -> u32 {
+    if (comptime) { 
+        return x * 10; // Compile-time path
+    } else {
+        return x * 2;  // Runtime path
+    }
+}
+
+struct Point {
+    x: u32,
+    y: u32,
+
+    comptime func Point(x_val: u32, y_val: u32) -> Point {
+        return {
+            x: x_val,
+            y: y_val,
+        }
+    }
+
+    comptime const func(p: &Pointer) magnitude_sq() -> u32 { 
+        return x * x + y * y;
+    }
+
+    comptime func ~Point(){};
+
+};
+
+// Guarantees compile-time initialization (prevents static init order fiasco),
+// but the variable remains MUTABLE at runtime.
+comptime let global_counter: u32 = compute(5);
+
+// Lambdas are implicitly comptime
+comptime add := [](n1: u32, n2: u32) -> int { // C++23 deducing 'this' recursion
+    return n1 + n2;
+};
+
+struct Fib<N: u32> {
+    static comptime value: u32 = Fib<N - 1>::value + Fib<N - 2>::value;
+};
+
+struct Fib<0> { static comptime value: u32 = 0; };
+struct Fib<1> { static comptime value: u32 = 1; };
+
+inline comptime Fib_v<N>: u32 = Fib<N>::value;
+
+comptime func get_point_x<P: Point>() -> u32 {
+    return P.x;
+}
+
+// Immediately Invoked Lambda Expression (IILE) for complex compile-time lookup tables
+comptime lookup_table := comptime []() -> u32[10] {
+    let mut arr: u32[10] = [0; 10];
+    for (i: u32 = 0; i < 10; ++i) {
+        arr[i] = i * i;
+    }
+    return arr;
+}();
+
+func main() -> i32 {
+    // Modify comptime variable at runtime
+    global_counter += 10;
+
+    // Runtime execution of dual_mode_calc
+    let runtime_input: u32 = 3;
+    let runtime_res: u32 = dual_mode_calc(runtime_input); // Calls 'else' branch (returns 6)
+
+    // Compile-time constant already baked into binary
+    comptime p1: Point = {3, 4};
+    comptime p2: Point = p1 + Point{1, 2};
+
+    return 0;
+}
+
+// ============================================================================
+// 2. COMPILE-TIME STRING PARSER WITH VALIDATION
+// ============================================================================
+
+struct IPv4 {
+    packed: u32,
+
+    // 'comptime' constructor forces all string parsing to happen at compile time!
+    // Implicit conversion allows passing string literals directly to functions expecting IPv4.
+    comptime func IPv4(const char* str) -> IPv4 {
+
+        std::string_view sv(str);
+        std::array<uint32_t, 4> octets{};
+
+        let octet_idx: usize = 0;
+        let current_val: u32 = 0;
+        let has_digits: bool = false;
+
+        for (char c : sv) {
+            if (c >= '0' && c <= '9') {
+                has_digits = true;
+                current_val = current_val * 10 + (c - '0');
+                
+                if (current_val > 255) {
+                    ERROR_OCTET_EXCEEDS_255(); // Halts compilation here!
+                }
+            } else if (c == '.') {
+                if (!has_digits) {
+                    ERROR_EMPTY_OCTET(); // Halts compilation (e.g., "192..1.1")
+                }
+                if (octet_idx >= 3) {
+                    ERROR_INVALID_OCTET_COUNT(); // Halts compilation (too many dots)
+                }
+                octets[octet_idx++] = current_val;
+                current_val = 0;
+                has_digits = false;
+            } else {
+                ERROR_INVALID_CHARACTER_IN_IP(); // Halts compilation (e.g., "192.168.a.1")
+            }
+        }
+
+        // Validate final octet
+        if (!has_digits) {
+            ERROR_EMPTY_OCTET(); // Halts compilation (e.g., "192.168.1.")
+        }
+        if (octet_idx != 3) {
+            ERROR_INVALID_OCTET_COUNT(); // Halts compilation (too few dots)
+        }
+        octets[3] = current_val;
+
+        // Pack into single 32-bit integer at compile time
+        packed = (octets[0] << 24) | (octets[1] << 16) | (octets[2] << 8) | octets[3];
+    }
+};
+
+// ============================================================================
+// 3. ZERO-COST API USAGE
+// ============================================================================
+
+void connect_to_server(IPv4 address) {
+    // At runtime, 'address.packed' is already a raw integer constant!
+    std::cout << "Connecting to packed IP: 0x" << std::hex << address.packed << "\n";
+}
+
+func main() -> u32 {
+    // ✅ VALID: Parsed at compile time. Zero parsing code exists in the binary.
+    connect_to_server("192.168.1.1");
+
+    // ❌ INVALID: Uncommenting any line below causes a compile-time error
+    // pointing directly to the specific ERROR_* function:
+
+    // connect_to_server("192.168.999.1"); // Error: call to non-comptime 'ERROR_OCTET_EXCEEDS_255()'
+    // connect_to_server("192.168.1");     // Error: call to non-comptime 'ERROR_INVALID_OCTET_COUNT()'
+    // connect_to_server("192.168.abc.1"); // Error: call to non-comptime 'ERROR_INVALID_CHARACTER_IN_IP()'
+
+    return 0;
+}
+
+// Allows passing values (not just types) as template parameters.
+// Allows compile-time constants(pointer, literal struct types, etc.) to be used in templates.
+
+struct FixedBuffer<T, usize S> {
+    data: T[S],
+
+    pub const constexpr func capacity() -> usize { return S; }
+};
+
+func main() -> void {
+    FixedBuffer<int, 64> buf; // '64' is baked into the type at compile time
+}
+
+pub struct Stack<T> {
+    items: T[],
+    capacity: usize,
+
+    pub func init(capacity: usize) -> Stack<T> {
+        return Stack<T> {
+            items: [],
+            capacity: capacity,
+        };
+    }
+
+    pub func(self: &mut Stack<T>) push(value: T) -> void {
+        if (self.items.len() == self.capacity) {
+            self.grow();
+        }
+        self.items.push(value);
+    }
+
+    pub func(self: &mut Stack<T>) pop() -> Option<T> {
+        if (self.items.len() == 0) {
+            return Option<T>::None;
+        }
+
+        let index := self.items.len() - 1;
+        let value := self.items[index];
+        self.items.truncate(index);
+        return Option<T>::Some(value);
+    }
+
+    pub func(self: &Stack<T>) peek() -> Option<&T> {
+        if (self.items.len() == 0) {
+            return Option<&T>::None;
+        }
+        return Option<&T>::Some(&self.items[self.items.len() - 1]);
+    }
+
+    func(self: &mut Stack<T>) grow() -> void {
+        self.capacity = self.capacity * 2;
+        self.items.reserve(self.capacity);
+    }
+}

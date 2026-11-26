@@ -1,0 +1,5 @@
+//! Hosted prelude.
+//!
+//! Importing `cora::cora` brings the core and hosted libraries into scope.
+
+import "cora::lib";

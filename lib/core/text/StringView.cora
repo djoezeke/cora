@@ -1,0 +1,207 @@
+//! A non-owning view over a contiguous byte sequence.
+//!
+//! `StringView` never allocates and never frees.  It is the common read-only
+//! text type used by the core library and the hosted I/O layer.
+
+import "core::base::Option";
+
+pub struct StringView {
+    pub data: *const u8,
+    pub length: usize,
+
+    pub func StringView(data: *const u8, length: usize) -> StringView {
+        return StringView {
+            data: data,
+            length: length,
+        };
+    }
+
+    pub func from_cstr(text: *const u8) -> StringView {
+        if (text == null) {
+            return StringView(null, 0);
+        }
+
+        let mut length := 0;
+        while (text[length] != 0) {
+            length += 1;
+        }
+        return StringView(text, length);
+    }
+
+    pub func from_bytes(data: *const u8, length: usize) -> StringView {
+        return StringView(data, length);
+    }
+
+    pub func(self: &StringView) len() -> usize {
+        return self.length;
+    }
+
+    pub func(self: &StringView) is_empty() -> bool {
+        return self.length == 0;
+    }
+
+    pub func(self: &StringView) bytes() -> *const u8 {
+        return self.data;
+    }
+
+    pub func(self: &StringView) get(index: usize) -> Option<u8> {
+        if (index >= self.length) {
+            return Option<u8>::None;
+        }
+        return Option<u8>::Some(self.data[index]);
+    }
+
+    pub func(self: &StringView) slice(start: usize,
+                                       end: usize) -> StringView {
+        let mut safe_start := start;
+        if (safe_start > self.length) {
+            safe_start = self.length;
+        }
+
+        let mut safe_end := end;
+        if (safe_end > self.length) {
+            safe_end = self.length;
+        }
+        if (safe_end < safe_start) {
+            safe_end = safe_start;
+        }
+
+        return StringView(self.data + safe_start, safe_end - safe_start);
+    }
+
+    pub func(self: &StringView) starts_with(prefix: StringView) -> bool {
+        if (prefix.length > self.length) {
+            return false;
+        }
+
+        let mut index := 0;
+        while (index < prefix.length) {
+            if (self.data[index] != prefix.data[index]) {
+                return false;
+            }
+            index += 1;
+        }
+        return true;
+    }
+
+    pub func(self: &StringView) ends_with(suffix: StringView) -> bool {
+        if (suffix.length > self.length) {
+            return false;
+        }
+
+        let offset := self.length - suffix.length;
+        let mut index := 0;
+        while (index < suffix.length) {
+            if (self.data[offset + index] != suffix.data[index]) {
+                return false;
+            }
+            index += 1;
+        }
+        return true;
+    }
+
+    pub func(self: &StringView) find(needle: StringView) -> Option<usize> {
+        if (needle.length == 0) {
+            return Option<usize>::Some(0);
+        }
+        if (needle.length > self.length) {
+            return Option<usize>::None;
+        }
+
+        let mut start := 0;
+        while (start + needle.length <= self.length) {
+            let mut offset := 0;
+            while (offset < needle.length &&
+                   self.data[start + offset] == needle.data[offset]) {
+                offset += 1;
+            }
+            if (offset == needle.length) {
+                return Option<usize>::Some(start);
+            }
+            start += 1;
+        }
+        return Option<usize>::None;
+    }
+
+    pub func(self: &StringView) find_char(byte: u8) -> Option<usize> {
+        let mut index := 0;
+        while (index < self.length) {
+            if (self.data[index] == byte) {
+                return Option<usize>::Some(index);
+            }
+            index += 1;
+        }
+        return Option<usize>::None;
+    }
+
+    pub func(self: &StringView) trim() -> StringView {
+        return self.trim_start().trim_end();
+    }
+
+    pub func(self: &StringView) trim_start() -> StringView {
+        let mut start := 0;
+        while (start < self.length && is_space(self.data[start])) {
+            start += 1;
+        }
+        return self.slice(start, self.length);
+    }
+
+    pub func(self: &StringView) trim_end() -> StringView {
+        let mut end := self.length;
+        while (end > 0 && is_space(self.data[end - 1])) {
+            end -= 1;
+        }
+        return self.slice(0, end);
+    }
+
+    pub func(self: &StringView) equals(other: StringView) -> bool {
+        if (self.length != other.length) {
+            return false;
+        }
+
+        let mut index := 0;
+        while (index < self.length) {
+            if (self.data[index] != other.data[index]) {
+                return false;
+            }
+            index += 1;
+        }
+        return true;
+    }
+
+    pub func(self: &StringView) compare(other: StringView) -> i32 {
+        let mut index := 0;
+        while (index < self.length && index < other.length) {
+            if (self.data[index] < other.data[index]) {
+                return -1;
+            }
+            if (self.data[index] > other.data[index]) {
+                return 1;
+            }
+            index += 1;
+        }
+
+        if (self.length < other.length) {
+            return -1;
+        }
+        if (self.length > other.length) {
+            return 1;
+        }
+        return 0;
+    }
+
+    pub func(self: &StringView) hash() -> u32 {
+        let mut value := 2166136261u32;
+        let mut index := 0;
+        while (index < self.length) {
+            value ^= self.data[index] as u32;
+            value *= 16777619u32;
+            index += 1;
+        }
+        return value;
+    }
+}
+
+func is_space(byte: u8) -> bool {
+    return byte == ' ' || byte == '\t' || byte == '\n' || byte == '\r';
+}

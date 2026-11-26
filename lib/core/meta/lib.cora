@@ -1,0 +1,3 @@
+//! Compile-time and reflection support.
+//!
+//! This module is reserved for the reflection API used by `comptime` code.

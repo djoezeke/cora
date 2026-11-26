@@ -16,3 +16,6 @@ import "core::simd";
 import "core::sync::lib";
 import "core::time";
 import "core::debug::lib";
+import "core::container::lib";
+import "core::text::lib";
+import "core::meta::lib";

@@ -1,20 +1,21 @@
 //! A growable contiguous vector.
+//!
+//! `Vector<T, A>` is the static-inheritance container: the allocator type is a
+//! generic parameter and every allocation call is resolved at compile time.
+//! Instantiate it with `GPAllocator`, `SafeAllocator`, or the dynamic
+//! `Allocator` fat pointer.
 
 import "core::base::Option";
 import "core::mem::Allocator";
 import "core::mem::GPAllocator";
 
-pub struct Vector<T, A: Allocator<T>> {
+pub struct Vector<T, A> {
     data: *mut T,
     length: usize,
     capacity: usize,
     allocator: A,
 
-    /*!
-     * @brief  Creates an empty vector.
-     * @param  allocator  An allocator object.
-     */
-    pub func Vector(allocator: &const A) -> Vector<T, A> {
+    pub func Vector(allocator: A) -> Vector<T, A> {
         return Vector<T, A> {
             data: null,
             length: 0,

@@ -6,8 +6,6 @@
 import "core::mem::Allocator";
 import "core::text::StringView";
 
-import < stdio.h >;
-
 pub struct String {
     data: *mut u8,
     length: usize,
@@ -23,7 +21,8 @@ pub struct String {
         };
     }
 
-    pub func with_capacity(allocator: Allocator, capacity: usize) -> String {
+    pub func with_capacity(allocator: Allocator,
+                           capacity: usize) -> String {
         let mut result := String(allocator);
         if (capacity > 0) {
             let raw := result.allocator.alloc(capacity, 1);
@@ -59,16 +58,16 @@ pub struct String {
     }
 
     pub func(self: &String) bytes() -> *const u8 {
-        return self.data as * const u8;
+        return self.data as *const u8;
     }
 
     pub func(self: &String) view() -> StringView {
-        return StringView(self.data as * const u8, self.length);
+        return StringView(self.data as *const u8, self.length);
     }
 
     pub func(self: &String) cstr() -> *const u8 {
         // The trailing NUL is maintained by reserve, append, and clear.
-        return self.data as * const u8;
+        return self.data as *const u8;
     }
 
     pub func(self: &mut String) reserve(additional: usize) -> bool {
@@ -90,7 +89,7 @@ pub struct String {
             self.allocator.alloc(new_capacity, 1)
         } else {
             self.allocator.realloc(self.data, self.capacity,
-                new_capacity, 1)
+                                   new_capacity, 1)
         };
         if (raw == null) {
             return false;
@@ -147,7 +146,7 @@ pub struct String {
         if (value < 0) {
             self.append_char('-');
             // Negating the unsigned magnitude also handles the minimum i32.
-            magnitude = 0u32 -(value as u32);
+            magnitude = 0u32 - (value as u32);
         } else {
             magnitude = value as u32;
         }
@@ -155,7 +154,7 @@ pub struct String {
         let mut digits: u8[32] = [0; 32];
         let mut count := 0;
         while (magnitude > 0) {
-            digits[count] = 48u8 +(magnitude % 10) as u8;
+            digits[count] = 48u8 + (magnitude % 10) as u8;
             count += 1;
             magnitude = magnitude / 10;
         }
@@ -175,7 +174,7 @@ pub struct String {
         let mut digits: u8[32] = [0; 32];
         let mut count := 0;
         while (value > 0) {
-            digits[count] = 48u8 +(value % 10) as u8;
+            digits[count] = 48u8 + (value % 10) as u8;
             count += 1;
             value = value / 10;
         }

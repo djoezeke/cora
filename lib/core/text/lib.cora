@@ -1,0 +1,4 @@
+//! Core text types.
+
+import "core::text::StringView";
+import "core::text::String";

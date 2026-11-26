@@ -1,0 +1,84 @@
+//! General-purpose allocator backed by the C runtime heap.
+//!
+//! `GPAllocator` demonstrates both forms of inheritance used by the standard
+//! library:
+//!
+//! * static inheritance -- containers such as `Vector<T, GPAllocator>` call
+//!   these methods directly and are monomorphized for this concrete type;
+//! * dynamic inheritance -- `allocator()` returns an `Allocator` fat pointer
+//!   whose vtable dispatches to the same methods at run time.
+
+import "core::mem::Allocator";
+
+[[link_name("malloc")]]
+extern "C" func c_malloc(size: usize) -> *mut u8;
+
+[[link_name("realloc")]]
+extern "C" func c_realloc(ptr: *mut u8, size: usize) -> *mut u8;
+
+[[link_name("free")]]
+extern "C" func c_free(ptr: *mut u8) -> void;
+
+pub struct GPAllocator {
+    pub func GPAllocator() -> GPAllocator {
+        return GPAllocator {};
+    }
+
+    pub func(self: &GPAllocator) alloc(size: usize,
+                                       align: usize) -> *mut u8 {
+        if (size == 0) {
+            return null;
+        }
+        // malloc returns storage aligned for every fundamental type.
+        return c_malloc(size);
+    }
+
+    pub func(self: &GPAllocator) realloc(ptr: *mut u8, old_size: usize,
+                                         new_size: usize,
+                                         align: usize) -> *mut u8 {
+        if (ptr == null) {
+            return self.alloc(new_size, align);
+        }
+        if (new_size == 0) {
+            self.free(ptr, old_size, align);
+            return null;
+        }
+        return c_realloc(ptr, new_size);
+    }
+
+    pub func(self: &GPAllocator) free(ptr: *mut u8, size: usize,
+                                      align: usize) -> void {
+        if (ptr != null) {
+            c_free(ptr);
+        }
+    }
+
+    //! Erase this allocator into the dynamic `Allocator` interface.
+    pub func(self: *GPAllocator) allocator() -> Allocator {
+        return Allocator(self as *mut void,
+                         &GP_VTABLE as *const Allocator::VTable);
+    }
+}
+
+const GP_VTABLE: Allocator::VTable = Allocator::VTable {
+    alloc: gp_alloc,
+    realloc: gp_realloc,
+    free: gp_free,
+};
+
+func gp_alloc(ctx: *mut void, size: usize, align: usize) -> *mut u8 {
+    let allocator := ctx as *GPAllocator;
+    return allocator.alloc(size, align);
+}
+
+func gp_realloc(ctx: *mut void, ptr: *mut u8, old_size: usize,
+                new_size: usize, align: usize) -> *mut u8 {
+    let allocator := ctx as *GPAllocator;
+    return allocator.realloc(ptr, old_size, new_size, align);
+}
+
+func gp_free(ctx: *mut void, ptr: *mut u8, size: usize,
+             align: usize) -> void {
+    let allocator := ctx as *GPAllocator;
+    allocator.free(ptr, size, align);
+}

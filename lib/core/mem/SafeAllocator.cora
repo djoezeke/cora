@@ -1,0 +1,128 @@
+//! A checked allocator that decorates another `Allocator`.
+//!
+//! `SafeAllocator` tracks live allocations and total bytes, rejects invalid
+//! layouts, and can be sealed to reject all future requests.  It is itself an
+//! ordinary allocator: containers can use it statically through the generic
+//! `A` parameter, or dynamically through `allocator()`.
+
+import "core::mem::Allocator";
+
+pub struct SafeAllocator {
+    backing: Allocator,
+    live_allocations: usize,
+    total_allocated: usize,
+    total_freed: usize,
+    sealed: bool,
+
+    pub func SafeAllocator(backing: Allocator) -> SafeAllocator {
+        return SafeAllocator {
+            backing: backing,
+            live_allocations: 0,
+            total_allocated: 0,
+            total_freed: 0,
+            sealed: false,
+        };
+    }
+
+    pub func(self: &mut SafeAllocator) alloc(size: usize,
+                                             align: usize) -> *mut u8 {
+        if (!self.accepts(size, align)) {
+            return null;
+        }
+        let ptr := self.backing.alloc(size, align);
+        if (ptr != null) {
+            self.live_allocations += 1;
+            self.total_allocated += size;
+        }
+        return ptr;
+    }
+
+    pub func(self: &mut SafeAllocator) realloc(ptr: *mut u8, old_size: usize,
+                                               new_size: usize,
+                                               align: usize) -> *mut u8 {
+        if (ptr == null) {
+            return self.alloc(new_size, align);
+        }
+        if (new_size == 0) {
+            self.free(ptr, old_size, align);
+            return null;
+        }
+        if (!self.accepts(new_size, align)) {
+            return null;
+        }
+        let result := self.backing.realloc(ptr, old_size, new_size, align);
+        if (result != null) {
+            self.total_allocated += new_size;
+            self.total_freed += old_size;
+        }
+        return result;
+    }
+
+    pub func(self: &mut SafeAllocator) free(ptr: *mut u8, size: usize,
+                                            align: usize) -> void {
+        if (ptr == null) {
+            return;
+        }
+        self.backing.free(ptr, size, align);
+        if (self.live_allocations > 0) {
+            self.live_allocations -= 1;
+        }
+        self.total_freed += size;
+    }
+
+    pub func(self: &SafeAllocator) live() -> usize {
+        return self.live_allocations;
+    }
+
+    pub func(self: &SafeAllocator) allocated() -> usize {
+        return self.total_allocated;
+    }
+
+    pub func(self: &SafeAllocator) freed() -> usize {
+        return self.total_freed;
+    }
+
+    pub func(self: &SafeAllocator) is_sealed() -> bool {
+        return self.sealed;
+    }
+
+    pub func(self: &mut SafeAllocator) seal() -> void {
+        self.sealed = true;
+    }
+
+    //! Erase this allocator into the dynamic `Allocator` interface.
+    pub func(self: *SafeAllocator) allocator() -> Allocator {
+        return Allocator(self as *mut void,
+                         &SAFE_VTABLE as *const Allocator::VTable);
+    }
+
+    func(self: &SafeAllocator) accepts(size: usize, align: usize) -> bool {
+        if (self.sealed || size == 0 || align == 0) {
+            return false;
+        }
+        return align <= 4096;
+    }
+}
+
+const SAFE_VTABLE: Allocator::VTable = Allocator::VTable {
+    alloc: safe_alloc,
+    realloc: safe_realloc,
+    free: safe_free,
+};
+
+func safe_alloc(ctx: *mut void, size: usize, align: usize) -> *mut u8 {
+    let allocator := ctx as *SafeAllocator;
+    return allocator.alloc(size, align);
+}
+
+func safe_realloc(ctx: *mut void, ptr: *mut u8, old_size: usize,
+                  new_size: usize, align: usize) -> *mut u8 {
+    let allocator := ctx as *SafeAllocator;
+    return allocator.realloc(ptr, old_size, new_size, align);
+}
+
+func safe_free(ctx: *mut void, ptr: *mut u8, size: usize,
+               align: usize) -> void {
+    let allocator := ctx as *SafeAllocator;
+    allocator.free(ptr, size, align);
+}

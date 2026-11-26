@@ -1,0 +1,61 @@
+//! A last-in, first-out stack backed by `Vector`.
+//!
+//! `Stack<T, A>` uses the same generic allocator parameter as `Vector`, so it
+//! works with a concrete allocator (static dispatch) or with `Allocator`
+//! (dynamic dispatch through the vtable).
+
+import "core::base::Option";
+import "core::container::Vector";
+import "core::mem::Allocator";
+import "core::mem::GPAllocator";
+
+pub struct Stack<T, A> {
+    items: Vector<T, A>,
+
+    pub func Stack(allocator: A) -> Stack<T, A> {
+        return Stack<T, A> {
+            items: Vector<T, A>(allocator),
+        };
+    }
+
+    pub func(self: &Stack<T, A>) len() -> usize {
+        return self.items.len();
+    }
+
+    pub func(self: &Stack<T, A>) is_empty() -> bool {
+        return self.items.is_empty();
+    }
+
+    pub func(self: &mut Stack<T, A>) push(value: T) -> bool {
+        return self.items.push(value);
+    }
+
+    pub func(self: &mut Stack<T, A>) pop() -> Option<T> {
+        return self.items.pop();
+    }
+
+    pub func(self: &Stack<T, A>) peek() -> Option<&T> {
+        if (self.items.is_empty()) {
+            return Option<&T>::None;
+        }
+        return self.items.get(self.items.len() - 1);
+    }
+
+    pub func(self: &mut Stack<T, A>) peek_mut() -> Option<&mut T> {
+        if (self.items.is_empty()) {
+            return Option<&mut T>::None;
+        }
+        return self.items.get_mut(self.items.len() - 1);
+    }
+
+    pub func(self: &mut Stack<T, A>) clear() -> void {
+        self.items.clear();
+    }
+
+    pub func ~Stack() -> void {
+        self.items.deinit();
+    }
+}
+
+using GPStack<T> = Stack<T, GPAllocator>;
+using DynamicStack<T> = Stack<T, Allocator>;

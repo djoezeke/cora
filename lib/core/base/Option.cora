@@ -1,0 +1,24 @@
+//! The core optional value type.
+
+pub enum Option<T> {
+    None,
+    Some(T),
+}
+
+pub func is_some<T>(value: Option<T>) -> bool {
+    return match (value) {
+        Option<T>::Some(_) => true,
+        Option<T>::None => false,
+    };
+}
+
+pub func is_none<T>(value: Option<T>) -> bool {
+    return !is_some(value);
+}
+
+pub func unwrap_or<T>(value: Option<T>, fallback: T) -> T {
+    return match (value) {
+        Option<T>::Some(inner) => inner,
+        Option<T>::None => fallback,
+    };
+}

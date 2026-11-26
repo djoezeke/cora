@@ -1,0 +1,86 @@
+//! Allocator, container, and string demo.
+//!
+//! This sample exercises:
+//!
+//! * `GPAllocator` through static generic instantiation
+//!   (`Vector<i32, GPAllocator>` and `Stack<i32, GPAllocator>`);
+//! * the dynamic `Allocator` fat pointer through `SafeAllocator`;
+//! * `String` and `StringView` from the core library;
+//! * the hosted `println` function from `lib/cora`.
+
+import "core::base::Option";
+import "core::mem::Allocator";
+import "core::mem::GPAllocator";
+import "core::mem::SafeAllocator";
+import "core::container::Vector";
+import "core::container::Stack";
+import "core::text::String";
+import "core::text::StringView";
+import "cora::io::stdio";
+
+pub func main() -> i32 {
+    // Static inheritance: the allocator is a generic parameter, so every
+    // `alloc`/`realloc`/`free` call is resolved at compile time.
+    let vector_gp := GPAllocator();
+    let mut numbers := Vector<i32, GPAllocator>(vector_gp);
+    numbers.push(10);
+    numbers.push(20);
+    numbers.push(30);
+
+    let stack_gp := GPAllocator();
+    let mut stack := Stack<i32, GPAllocator>(stack_gp);
+    stack.push(1);
+    stack.push(2);
+    stack.push(3);
+
+    // Dynamic inheritance: `Allocator` is a context pointer plus a vtable.
+    // `SafeAllocator` decorates the GP allocator and exposes the same vtable
+    // interface, so the container code does not change.
+    let dynamic_gp := GPAllocator();
+    let mut safe := SafeAllocator(dynamic_gp.allocator());
+
+    let mut dynamic_numbers := Vector<i32, Allocator>(safe.allocator());
+    dynamic_numbers.push(7);
+    dynamic_numbers.push(11);
+    dynamic_numbers.push(13);
+
+    let mut greeting := String(safe.allocator());
+    greeting.append_cstr("Hello, Cora!");
+    greeting.append_char(' ');
+    greeting.append_view(StringView::from_cstr("Allocator + String"));
+    greeting.append_cstr(" | empty=");
+    greeting.append_bool(false);
+    println(greeting.view());
+
+    let mut report := String(safe.allocator());
+    report.append_cstr("static vector:");
+    for (value : numbers) {
+        report.append_char(' ');
+        report.append_i32(value);
+    }
+
+    let top := stack.pop();
+    match (top) {
+        Option<i32>::Some(value) => {
+            report.append_cstr(" | stack top: ");
+            report.append_i32(value);
+        },
+        Option<i32>::None => {
+            report.append_cstr(" | stack empty");
+        },
+    };
+    println(report.view());
+
+    let mut dynamic_report := String(safe.allocator());
+    dynamic_report.append_cstr("dynamic vector:");
+    for (value : dynamic_numbers) {
+        dynamic_report.append_char(' ');
+        dynamic_report.append_i32(value);
+    }
+    dynamic_report.append_cstr(" | live allocations: ");
+    dynamic_report.append_u32(safe.live() as u32);
+    println(dynamic_report.view());
+
+    defer println(StringView::from_cstr("allocator demo complete"));
+    return 0;
+}

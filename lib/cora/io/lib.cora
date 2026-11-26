@@ -10,3 +10,4 @@
 
 import "cora::io::reader";
 import "cora::io::writer";
+import "cora::io::stdio";
