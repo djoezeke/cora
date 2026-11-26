@@ -208,10 +208,11 @@ TEST_CASE("Incremental lexer preserves line-start flags across edited comments",
     REQUIRE((fixture.stream.flag(5) & TOKEN_AT_LINE_START) != 0);
 }
 
-TEST_CASE("Incremental lexing of syntax.cora matches a full re-lex",
+TEST_CASE("Incremental lexing of syntax fixture matches a full re-lex",
           "[lexer][incremental][syntax]")
 {
-    const std::string path = std::string(CORA_SOURCE_DIR) + "/syntax.cora";
+    const std::string path =
+        std::string(CORA_SOURCE_DIR) + "/tests/fixtures/syntax.cora";
     const std::string initial = read_source_file(path);
     REQUIRE_FALSE(initial.empty());
 

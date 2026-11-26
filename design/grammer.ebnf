@@ -33,9 +33,17 @@
    `sizeof`, `alignof`, `offsetof`, `typeof`, `decltype`, `nameof`,
    `static_assert`, `syntax`, `virtual`, `override`, `constexpr`,
    `fallthrough`, `attribute`, `pattern`, `expr`, `stmt`, `item`, `ident`,
-   `literal`, `meta`, `tt`, `true`, `false`, and the builtin type names) are
-   contextual keywords: they are ordinary identifiers except in the
-   productions where the grammar explicitly matches them.
+   `literal`, `meta`, `tt`, `template`, `concept`, `requires`, `typename`,
+   `class`, `auto`, `operator`, `friend`, `public`, `private`, `protected`,
+   `abstract`, `final`, `explicit`, `consteval`, `constinit`, `noexcept`,
+   `true`, `false`, and the builtin type names) are contextual keywords:
+   they are ordinary identifiers except in the productions where the grammar
+   explicitly matches them.
+
+   Metadata has two surface forms: attributes use double square brackets
+   (`[[pure, nothrow, nodiscard("reason")]]`) and annotations use a hash
+   followed by square brackets (`#[skip(), json::rename("name")]`).  The
+   older `@annotation` spelling is retained as a compatibility form.
 
    ========================================================================== *)
 
@@ -106,6 +114,12 @@ contextual-keyword      = "as" | "is" | "in" | "where"
                         | "fallthrough" | "attribute" | "pattern"
                         | "expr" | "stmt" | "item" | "ident"
                         | "literal" | "meta" | "tt"
+                        | "template" | "concept" | "requires"
+                        | "typename" | "class" | "auto"
+                        | "operator" | "friend"
+                        | "public" | "private" | "protected"
+                        | "abstract" | "final" | "explicit"
+                        | "consteval" | "constinit" | "noexcept"
                         | "true" | "false" ;
 
 (* --- literals ------------------------------------------------------------ *)
@@ -245,7 +259,7 @@ punctuator              = "(" | ")" | "[" | "]" | "{" | "}"
                         | "=" | "==" | "!=" | "<" | ">" | "<=" | ">="
                         | "<=>" | "<<" | ">>" | "<<=" | ">>="
                         | "->" | "=>" | "^^" | "..." | "$" | "@"
-                        | "[[" | "]]" | "[:" | ":]" ;
+                        | "[[" | "]]" | "[:" | ":]" | "#[" ;
 
 (*
    A lexer uses longest-match for punctuators, so `<=>` is one token, not
@@ -259,17 +273,21 @@ punctuator              = "(" | ")" | "[" | "]" | "{" | "}"
    2. Compilation units, modules, imports, and declarations
    ========================================================================== *)
 
-declaration             = { declaration-decorator }, declaration-core ;
+declaration             = { declaration-decorator }, [ template-head ],
+                          declaration-core ;
+
+template-head           = "template", [ "<", [ generic-parameter-list ], ">" ] ;
 
 declaration-decorator   = attribute
                         | annotation
                         | visibility ;
 
-visibility              = "pub" ;
+visibility              = "pub" | "public" | "private" | "protected" ;
 
 declaration-core        = module-declaration
                         | import-declaration
                         | using-declaration
+                        | concept-declaration
                         | function-declaration
                         | comptime-declaration
                         | variable-declaration
@@ -280,7 +298,11 @@ declaration-core        = module-declaration
                         | enum-declaration
                         | macro-declaration ;
 
-compile-time-specifier  = "comptime" | "constexpr" ;
+compile-time-specifier  = "comptime" | "constexpr"
+                        | "consteval" | "constinit" ;
+
+concept-declaration     = "concept", identifier, [ generic-parameter-list ],
+                          "=", constraint-expression, ";" ;
 
 (* --- modules ------------------------------------------------------------- *)
 
@@ -350,6 +372,7 @@ type                    = reference-type
                         | raw-pointer-type
                         | owned-type
                         | qualified-type
+                        | constrained-auto-type
                         | prefix-slice-type
                         | array-type
                         | pack-type
@@ -362,7 +385,10 @@ raw-pointer-type        = "*", [ "const" | "mut" ], type ;
 
 owned-type              = ( "own" | "box" | "weak" | "shared" ), type ;
 
-qualified-type          = "const", type ;
+qualified-type          = "const", type
+                        | "typename", ( type-path | reflection-splice ) ;
+
+constrained-auto-type   = constraint, "auto" ;
 
 prefix-slice-type       = "[", type, "]" ;
 
@@ -387,6 +413,7 @@ primary-type            = primitive-type
                         | "void"
                         | "never"
                         | "any"
+                        | "auto"
                         | "Self"
                         | "type" ;
 
@@ -405,7 +432,9 @@ function-type-parameter-list = function-type-parameter,
                           { ",", function-type-parameter }, [ "," ]
                         | "..." ;
 
-function-type-parameter = [ identifier, ":" ], [ "..." ], type, [ "..." ] ;
+function-type-parameter = [ identifier, ":" ], [ "..." ], type,
+                          [ "..." ], [ identifier ]
+                        | type, [ "..." ], identifier ;
 
 type-path               = [ "::" ], type-path-segment,
                           { "::", type-path-segment } ;
@@ -439,34 +468,60 @@ generic-parameter-list  = "<", generic-parameter,
 
 generic-parameter       = [ compile-time-specifier ],
                           ( type-parameter
+                          | constrained-type-parameter
+                          | template-template-parameter
                           | const-generic-parameter
                           | lifetime-parameter
                           | parameter-pack-parameter
                           | specialization-parameter ) ;
 
-type-parameter          = identifier, [ ":", constraint ],
-                          [ "=", type ] ;
+type-parameter          = [ "typename" | "class" ], [ identifier ],
+                          [ ":", constraint ], [ "=", type ] ;
+
+constrained-type-parameter = constraint, identifier, [ "=", type ] ;
+
+template-template-parameter = "template", "<",
+                          [ generic-parameter-list ], ">",
+                          [ "typename" | "class" | "struct" ],
+                          identifier, [ "=", type ] ;
 
 const-generic-parameter = "const", identifier, ":", type,
                           [ "=", expression ]
-                        | type, identifier, [ "=", expression ] ;
+                        | [ "const" ], type, identifier,
+                          [ "=", expression ] ;
 
 lifetime-parameter      = lifetime ;
 
-parameter-pack-parameter = identifier, ":", "...", type
-                        | "...", identifier, [ ":", type ] ;
+parameter-pack-parameter = [ "typename" | "class" ], "...", [ identifier ],
+                           [ ":", type ], [ "=", type ]
+                         | "...", identifier, [ ":", type ]
+                         | identifier, ":", "...", type
+                         | type, "...", identifier ;
 
 specialization-parameter = literal
-                        | type
-                        | pattern ;
+                         | type
+                         | pattern ;
 
-constraint              = type-bound, { "+", type-bound }
-                        | constraint-call ;
+constraint              = constraint-or ;
+
+constraint-or           = constraint-and, { "||", constraint-and } ;
+
+constraint-and          = constraint-term, { "&&", constraint-term } ;
+
+constraint-term         = [ "!" ], constraint-primary ;
+
+constraint-primary      = type-bound, { "+", type-bound }
+                        | constraint-call
+                        | "(", constraint, ")" ;
 
 type-bound              = type-path, [ generic-argument-list ]
                         | "(", constraint, ")" ;
 
 constraint-call         = path-expression, "(", [ argument-list ], ")" ;
+
+requires-clause         = "requires", constraint-expression ;
+
+constraint-expression   = expression | constraint ;
 
 generic-argument-list   = "<", generic-argument,
                           { ",", generic-argument }, [ "," ], ">" ;
@@ -488,10 +543,21 @@ where-predicate         = ( identifier | type ), ":", constraint
 (*
    Notes:
    - `Box<T>`, `Result<T, E>`, and `Map<K, V>` use angle brackets in type
-     position without a disambiguating keyword.
-   - `FixedBuffer<T, usize S>` and `Fib<0>` are value/specialization generic
-     parameters.  A generic parameter whose first token is a type followed by
-     an identifier is a value parameter; a literal is a specialization.
+     position without a disambiguating keyword.  A declaration may also use a
+     C++-style `template <...>` head; the native Cora spelling places the
+     parameter list directly after the declared name.
+   - `FixedBuffer<T, usize S>`, `Fib<0>`, and `Storage<T*, int>` are
+     value/specialization generic parameters.  A generic parameter whose first
+     token is a type followed by an identifier is a value parameter; a literal
+     is a specialization.  `template <>` introduces an explicit
+     specialization.
+   - `typename T` and `class T` are accepted as type-parameter introducers.
+     A constrained parameter may omit the introducer (`Numeric T`).  A
+     parameter pack is written `typename... Args`, `Args... args`, or
+     `const Args&... args`.
+   - `concept Name = ...;` declares a named constraint.  `requires` may
+     introduce a constraint before the return type, after the parameter list,
+     or after the return type.  `where` remains the native Cora spelling.
    - In expression position, a generic argument list is recognized only when
      the `<` is adjacent to the preceding path segment and the matching `>` is
      followed by a call, member access, or initializer delimiter.  Thus
@@ -507,23 +573,46 @@ function-declaration    = { function-qualifier }, "func", [ receiver ],
                           function-name, [ generic-parameter-list ], "(",
                           [ parameter-list ], ")",
                           [ initialization-list ],
+                          [ requires-clause ],
                           [ "->", type ],
                           [ where-clause ],
+                          [ pure-specifier ],
                           function-body ;
 
-function-qualifier      = "comptime"
+function-qualifier      = compile-time-specifier
                         | "const"
-                        | "constexpr"
                         | "inline"
                         | "static"
                         | "extern", [ string-literal ]
                         | "unsafe"
                         | "async"
                         | "virtual"
-                        | "override" ;
+                        | "override"
+                        | "abstract"
+                        | "final"
+                        | "friend"
+                        | "explicit"
+                        | "noexcept", [ "(", [ expression ], ")" ] ;
 
-function-name           = identifier
-                        | "~", identifier ;
+function-name           = [ member-owner, "::" ], function-name-tail ;
+
+member-owner            = type-path-segment,
+                          { "::", type-path-segment } ;
+
+function-name-tail      = identifier
+                        | "~", identifier
+                        | "operator", ( operator-symbol | type ) ;
+
+operator-symbol         = "+" | "-" | "*" | "/" | "%"
+                        | "++" | "--"
+                        | "&" | "|" | "^" | "~" | "!" | "&&" | "||"
+                        | "=" | "==" | "!=" | "<" | ">" | "<=" | ">="
+                        | "<=>" | "<<" | ">>"
+                        | "+=" | "-=" | "*=" | "/=" | "%="
+                        | "&=" | "|=" | "^=" | "<<=" | ">>="
+                        | "->" | "." | "," | "(", ")" | "[", "]" ;
+
+pure-specifier          = "=", expression ;
 
 receiver                = "(", parameter, ")" ;
 
@@ -539,18 +628,24 @@ parameter               = { parameter-decorator },
 
 parameter-decorator     = attribute | annotation ;
 
-parameter-mode          = "mut" | "const" | "own" | "borrow" | "ref" ;
+parameter-mode          = "mut" | "const" | "own" | "borrow" | "ref"
+                        | "this" ;
 
 parameter-form          = [ identifier, ":" ], [ "..." ], type,
-                          [ "..." ], [ "=", expression ] ;
+                          [ "..." ], [ identifier ],
+                          [ "=", expression ]
+                        | type, [ "..." ], identifier,
+                          [ "=", expression ] ;
 
 initialization-list     = ":", member-initializer,
                           { ",", member-initializer } ;
 
-member-initializer      = identifier, "(", [ argument-list ], ")"
-                        | identifier, "=", expression ;
+member-initializer      = type-path,
+                          ( "(", [ argument-list ], ")"
+                          | "=", expression ) ;
 
-variable-declaration    = { "static" | "inline" },
+variable-declaration    = { "static" | "inline" | "constexpr"
+                          | "constinit" },
                           ( "let" | "mut" ),
                           variable-binding-list, ";" ;
 
@@ -560,7 +655,8 @@ variable-binding-list   = variable-binding,
 variable-binding        = [ "mut" ], pattern, [ ":", type ],
                           [ ( "=" | ":=" ), expression ] ;
 
-constant-declaration    = { "static" | "inline" }, "const",
+constant-declaration    = { "static" | "inline" | "constexpr"
+                          | "consteval" | "constinit" }, "const",
                           constant-binding-list, ";" ;
 
 constant-binding-list   = constant-binding,
@@ -571,15 +667,22 @@ constant-binding        = pattern, [ ":", type ],
 
 shorthand-declaration   = pattern, ":=", expression, ";" ;
 
-comptime-declaration    = [ "inline" ], "comptime", comptime-binding ;
+comptime-declaration    = [ "inline" ], compile-time-specifier,
+                          comptime-binding ;
 
 comptime-binding        = ( "let" | "mut" ), variable-binding-list, ";"
                         | "const", constant-binding-list, ";"
                         | variable-template-binding
+                        | typed-variable-template-binding
                         | shorthand-declaration ;
 
-variable-template-binding = identifier, [ generic-parameter-list ],
-                          ":", type, ( "=" | ":=" ), expression, ";" ;
+variable-template-binding = [ "const" ], identifier,
+                          [ generic-parameter-list ], [ ":", type ],
+                          ( "=" | ":=" ), expression, ";" ;
+
+typed-variable-template-binding = [ "const" ], type, identifier,
+                          [ generic-parameter-list ],
+                          ( "=" | ":=" ), expression, ";" ;
 
 (*
    `const func` is a const-qualified member function, not a constant named

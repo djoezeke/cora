@@ -48,9 +48,10 @@ namespace
     };
 } // namespace
 
-TEST_CASE("Parsing syntax.cora produces no errors", "[parser][syntax]")
+TEST_CASE("Parsing syntax fixture produces no errors", "[parser][syntax]")
 {
-    const std::string path = std::string(CORA_SOURCE_DIR) + "/syntax.cora";
+    const std::string path =
+        std::string(CORA_SOURCE_DIR) + "/tests/fixtures/syntax.cora";
     const std::string source = read_source_file(path);
     INFO("source path: " << path);
     REQUIRE_FALSE(source.empty());
